@@ -1,0 +1,24 @@
+# SHIELD-toolbox development dependencies
+#
+# The toolbox is not yet a package; it is a home for processing scripts and
+# notebooks that operate on data served by the sibling SHIELD repos.
+#
+# Recommended setup (Python 3.13 venv via uv), run from the toolbox root with
+# the three repos cloned side-by-side under the same parent directory:
+#
+#   uv venv --python 3.13 .venv
+#   uv pip install --python .venv -e ../SHIELD-Data -e ../SHIELD_DAS
+#   uv pip install --python .venv -r requirements-dev.txt
+#
+# The editable installs above link the toolbox to local clones of the sibling
+# packages, so edits in SHIELD-Data / SHIELD_DAS are picked up with no publish
+# step. This file pins only the baseline analysis/notebook dependencies.
+#
+# NOTE (macOS): importing `shield_das` currently fails on macOS because its
+# `data_recorder` module imports the `keyboard` package at module load, which
+# crashes under CoreFoundation. `shield_data` imports fine. See the repo README.
+
+jupyter
+pandas
+matplotlib
+pytz  # required transitively by plotly-resampler (pandas 3.x no longer pulls it in)
