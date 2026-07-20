@@ -1,7 +1,9 @@
 # SHIELD-toolbox
 
-Functions, scripts, and notebooks for processing data produced by the **SHIELD**
-gas-driven permeation rig.
+`shield_toolbox` — the analysis package for the **SHIELD** hydrogen gas-driven
+permeation rig. It processes recorded runs with the time-lag method to extract
+**permeability, diffusivity, and solubility** of materials and coatings
+relevant to fusion engineering.
 
 This repo is one of three that make up the SHIELD software stack. They are kept
 **related but separate** — independent repos, no monorepo or submodules:
@@ -10,16 +12,18 @@ This repo is one of three that make up the SHIELD software stack. They are kept
 |------|---------|-----------------------|
 | [`SHIELD_DAS`](https://github.com/PTTEPxMIT/SHIELD_DAS) | `shield_das` | **Records** rig data (LabJack + live Dash UI) |
 | [`SHIELD-Data`](https://github.com/PTTEPxMIT/SHIELD-Data) | `shield_data` | **Stores & serves** runs via `sd.load` / `sd.catalogue` |
-| **SHIELD-toolbox** (this repo) | — | **Processes** the served data (scripts + notebooks) |
+| **SHIELD-toolbox** (this repo) | `shield_toolbox` | **Processes** the served data (analysis package + notebooks) |
 
 **Data flow:** DAS records → Data stores/serves → toolbox processes.
 
 ## Layout
 
 ```
-scripts/     standalone processing scripts
-notebooks/   exploratory / analysis notebooks
-assets/      figures, schematics, and other static files
+src/shield_toolbox/   the installable analysis package
+tests/                pytest suite (synthetic fixtures only — no real run data)
+scripts/              standalone processing scripts
+notebooks/            example / exploratory analysis notebooks
+assets/               figures, schematics, and other static files
 ```
 
 ## Local development setup
@@ -31,10 +35,15 @@ clones (so their edits are picked up with no publish step):
 ```bash
 # from the toolbox repo root, with SHIELD-Data and SHIELD_DAS cloned alongside it
 uv venv --python 3.13 .venv
-uv pip install --python .venv -e ../SHIELD-Data -e ../SHIELD_DAS
-uv pip install --python .venv -r requirements-dev.txt
+uv sync                # installs shield_toolbox (editable) + dev tools
+uv pip install -e ../SHIELD-Data -e ../SHIELD_DAS
 source .venv/bin/activate
+pre-commit install     # ruff + nbstripout hooks
 ```
+
+> **Note:** a plain `uv sync` makes the venv match the lockfile *exactly*, which
+> uninstalls the sibling editable installs. After the first setup, use
+> `uv sync --inexact` (or re-run the `uv pip install -e ...` line after syncing).
 
 Quick check that data access works:
 

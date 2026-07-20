@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shield-toolbox"
+version = "0.1.0"
+description = "Analysis toolbox for the SHIELD gas-driven permeation rig: time-lag extraction of permeability, diffusivity, and solubility"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "PTTEPxMIT" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "uncertainties",
+]
+
+[project.urls]
+Repository = "https://github.com/PTTEPxMIT/SHIELD-toolbox"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "pre-commit",
+    "jupyter",
+    "nbstripout",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shield_toolbox"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+extend-select = [
+    "I",   # isort
+    "NPY", # numpy-specific rules
+    "UP",  # pyupgrade
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
