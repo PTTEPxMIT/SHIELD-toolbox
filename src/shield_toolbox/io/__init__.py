@@ -1,11 +1,16 @@
-"""Run loading: ``load_run(path) -> PermeationRun`` across all raw formats."""
+"""Run loading and format conversion.
 
-from shield_toolbox.io.loader import detect_run_format, load_run
-from shield_toolbox.io.run import PermeationRun, RunFormat
+``load_run(path) -> PermeationRun`` reads the canonical layout
+(``shield_data.csv`` + ``run_metadata.json``); ``convert_run`` upgrades
+old-generation run directories to it, once.
+"""
+
+from shield_toolbox.io.convert import convert_run
+from shield_toolbox.io.loader import load_run
+from shield_toolbox.io.run import PermeationRun
 
 __all__ = [
     "PermeationRun",
-    "RunFormat",
-    "detect_run_format",
+    "convert_run",
     "load_run",
 ]

@@ -68,7 +68,6 @@ def main() -> None:
         results = processed.result_dict()["results"]
         perm = processed.permeability
         print(f"{run.run_id}:")
-        print(f"  format         : {run.format.value}")
         print(
             f"  temperature    : {processed.sample_temperature_K:.1f} K "
             f"({processed.temperature_source})"

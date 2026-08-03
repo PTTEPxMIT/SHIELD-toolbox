@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from shield_toolbox import get_rig_config, load_run
+from shield_toolbox import convert_run, get_rig_config, load_run
 from shield_toolbox.processing import (
     RESULT_FILENAME,
     TIMESERIES_FILENAME,
@@ -20,9 +20,11 @@ SAMPLE = SampleInfo(
 
 
 @pytest.fixture
-def processed(fixtures_dir):
-    run = load_run(fixtures_dir / "pressure_only_run")
-    return process_run(run, SAMPLE)
+def processed(fixtures_dir, tmp_path):
+    run_dir = convert_run(
+        fixtures_dir / "pressure_only_run", tmp_path / "pressure_only_run"
+    )
+    return process_run(load_run(run_dir), SAMPLE)
 
 
 def test_rig_resolved_from_run_date(processed):
@@ -97,9 +99,10 @@ def test_write_creates_material_tree(processed, tmp_path):
     assert result["sample"]["substrate"] == "316L"
 
 
-def test_saturated_window_is_excluded(fixtures_dir):
+def test_saturated_window_is_excluded(fixtures_dir, tmp_path):
     # split_run fixture: first two upstream samples at the 10.12 V cap.
-    run = load_run(fixtures_dir / "split_run")
+    run_dir = convert_run(fixtures_dir / "split_run", tmp_path / "split_run")
+    run = load_run(run_dir)
     processed = process_run(run, SampleInfo(substrate="316L", thickness_m=0.00088))
     ts = processed.timeseries
     np.testing.assert_array_equal(ts["in_run"], [False, False, True, True])
