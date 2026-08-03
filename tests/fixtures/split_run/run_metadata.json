@@ -1,0 +1,35 @@
+{
+  "version": "1.1",
+  "run_info": {
+    "date": "2025-11-10",
+    "start_time": "2025-11-10 09:00:00",
+    "run_type": "permeation_exp",
+    "furnace_setpoint": 600,
+    "recording_interval_seconds": 0.5,
+    "backup_interval_seconds": 100,
+    "pressure_data_filename": "pressure_gauge_data.csv",
+    "v3_open_time": "2025-11-10 09:00:01.000"
+  },
+  "temperature_data_filename": "thermocouple_data.csv",
+  "gauges": [
+    {
+      "name": "Baratron626D_1KT",
+      "type": "Baratron626D_Gauge",
+      "ain_channel": 6,
+      "gauge_location": "upstream",
+      "full_scale_torr": 1000.0
+    },
+    {
+      "name": "Baratron626D_1T",
+      "type": "Baratron626D_Gauge",
+      "ain_channel": 4,
+      "gauge_location": "downstream",
+      "full_scale_torr": 1.0
+    }
+  ],
+  "thermocouples": [
+    {
+      "name": "type K thermocouple"
+    }
+  ]
+}
