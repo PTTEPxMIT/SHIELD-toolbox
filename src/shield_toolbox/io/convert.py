@@ -4,7 +4,7 @@ format (what the current DAS recorder writes)::
     <run_dir>/
     ├── shield_data.csv      one row per tick: RealTimestamp, gauge voltages
     │                        (V), thermocouple voltages (mV), local temp (C)
-    └── run_metadata.json    version "1.3", run_info.data_filename set
+    └── run_metadata.json    version "1.3"/"1.4", run_info.data_filename set
 
 Two older layouts exist and convert losslessly:
 
@@ -123,8 +123,10 @@ def _join_thermocouple(pressure: pd.DataFrame, tc: pd.DataFrame) -> pd.DataFrame
 
 def _upgrade_metadata(metadata: dict) -> dict:
     upgraded = dict(metadata)
-    upgraded["version"] = "1.3"
     run_info = dict(upgraded.get("run_info", {}))
+    # 1.4 = 1.3 layout + the sample description fields (sample_substrate,
+    # sample_coating, sample_coating_layers); only claim it when they exist.
+    upgraded["version"] = "1.4" if "sample_substrate" in run_info else "1.3"
     run_info["data_filename"] = CANONICAL_CSV
     run_info.pop("pressure_data_filename", None)
     upgraded["run_info"] = run_info

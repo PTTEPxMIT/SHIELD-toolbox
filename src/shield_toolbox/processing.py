@@ -49,13 +49,44 @@ RESULT_FILENAME = "result.json"
 
 @dataclass(frozen=True)
 class SampleInfo:
-    """The sample mounted for a run — not recorded by the DAS, so supplied at
-    processing time."""
+    """The sample mounted for a run.
+
+    Recorded by the DAS in metadata v1.4 (``sample_substrate``,
+    ``sample_coating``, ``sample_coating_layers``) and backfilled into the
+    stored runs; supplied by hand only for runs whose metadata predates the
+    backfill.
+    """
 
     substrate: str
     coating: str = "uncoated"
     thickness_m: float = 0.00088
     sample_id: str | None = None
+    coating_layers: tuple[dict, ...] = ()
+    """Coating layers as ``{"material": ..., "thickness_nm": ...}`` dicts,
+    ordered as named on the sample; empty for an uncoated sample."""
+
+    @classmethod
+    def from_metadata(cls, metadata: dict) -> SampleInfo | None:
+        """Build the sample description from a run's metadata.
+
+        Reads the v1.4 sample fields, falling back to the substrate-only
+        ``material`` (v1.0) / ``sample_material`` (v1.3) names. Returns None
+        if the metadata carries no sample description at all.
+        """
+        run_info = metadata.get("run_info", {})
+        substrate = run_info.get(
+            "sample_substrate",
+            run_info.get("material", run_info.get("sample_material")),
+        )
+        if substrate is None:
+            return None
+        defaults = cls(substrate="")
+        return cls(
+            substrate=substrate,
+            coating=run_info.get("sample_coating", defaults.coating),
+            thickness_m=run_info.get("sample_thickness", defaults.thickness_m),
+            coating_layers=tuple(run_info.get("sample_coating_layers", ())),
+        )
 
 
 @dataclass(frozen=True)
@@ -84,9 +115,11 @@ class ProcessedRun:
         """The scalar results and provenance, as written to ``result.json``."""
         window = self.timeseries["in_run"].to_numpy()
         time_s = self.timeseries["time_s"].to_numpy()
+        sample = asdict(self.sample)
+        sample["coating_layers"] = list(sample["coating_layers"])
         return {
             "run_id": self.run_id,
-            "sample": asdict(self.sample),
+            "sample": sample,
             "provenance": {
                 "rig_version": self.rig.version,
                 "toolbox_version": __version__,
@@ -148,20 +181,31 @@ class ProcessedRun:
 
 def process_run(
     run: PermeationRun,
-    sample: SampleInfo,
+    sample: SampleInfo | None = None,
     rig: RigConfig | None = None,
 ) -> ProcessedRun:
     """Process a loaded run into a :class:`ProcessedRun`.
 
     Args:
         run: The loaded raw run.
-        sample: Substrate / coating / thickness mounted for this run.
+        sample: Substrate / coating / thickness mounted for this run;
+            defaults to the sample description recorded in the run's
+            metadata (:meth:`SampleInfo.from_metadata`).
         rig: Rig configuration; defaults to the one in service on the run
             date (:func:`~shield_toolbox.config.get_rig_config_for_date`).
 
     Raises:
-        ValueError: If the run has no upstream or no downstream Baratron.
+        ValueError: If the run has no upstream or no downstream Baratron,
+            or if ``sample`` is omitted and the metadata records no sample
+            description.
     """
+    if sample is None:
+        sample = SampleInfo.from_metadata(run.metadata)
+        if sample is None:
+            raise ValueError(
+                f"Run {run.run_id}: metadata has no sample description — "
+                "pass sample=SampleInfo(...) explicitly"
+            )
     if rig is None:
         rig = get_rig_config_for_date(_run_date(run))
 
