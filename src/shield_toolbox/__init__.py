@@ -16,6 +16,10 @@ from shield_toolbox.io import PermeationRun, convert_run, fetch_run, load_run
 
 __version__ = _version("shield-toolbox")
 
+from shield_toolbox.campaign import (  # noqa: E402  (needs processing)
+    arrhenius,
+    load_results,
+)
 from shield_toolbox.processing import (  # noqa: E402  (needs __version__)
     ProcessedRun,
     SampleInfo,
@@ -28,11 +32,13 @@ __all__ = [
     "RigConfig",
     "SampleInfo",
     "__version__",
+    "arrhenius",
     "convert_run",
     "fetch_run",
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",
+    "load_results",
     "load_run",
     "process_run",
 ]

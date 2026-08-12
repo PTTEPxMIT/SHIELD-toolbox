@@ -9,6 +9,12 @@ from shield_toolbox.analysis.steady_state import (
     permeability_takaishi_sensui,
     stable_upstream_pressure,
 )
+from shield_toolbox.analysis.time_lag import (
+    diffusivity_from_time_lag,
+    downstream_baseline_torr,
+    solubility_from_permeability,
+    time_lag_from_fit,
+)
 from shield_toolbox.analysis.time_varying import (
     apparent_permeability_vs_time,
     smoothed_pressure_rise_pa_per_s,
@@ -20,10 +26,14 @@ __all__ = [
     "DownstreamFit",
     "UpstreamPlateau",
     "apparent_permeability_vs_time",
+    "diffusivity_from_time_lag",
+    "downstream_baseline_torr",
     "fit_arrhenius",
     "fit_downstream_rise",
     "permeability_takaishi_sensui",
     "run_window_mask",
     "smoothed_pressure_rise_pa_per_s",
+    "solubility_from_permeability",
     "stable_upstream_pressure",
+    "time_lag_from_fit",
 ]

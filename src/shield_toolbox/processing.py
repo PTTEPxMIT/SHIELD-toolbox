@@ -30,10 +30,14 @@ from shield_toolbox.analysis import (
     DownstreamFit,
     UpstreamPlateau,
     apparent_permeability_vs_time,
+    diffusivity_from_time_lag,
+    downstream_baseline_torr,
     fit_downstream_rise,
     permeability_takaishi_sensui,
     run_window_mask,
+    solubility_from_permeability,
     stable_upstream_pressure,
+    time_lag_from_fit,
 )
 from shield_toolbox.config import RigConfig, get_rig_config_for_date
 from shield_toolbox.gauges import (
@@ -108,6 +112,19 @@ class ProcessedRun:
     """``"thermocouple"`` or ``"furnace_setpoint_offset"``."""
     permeability: UFloat
     """H/(m·s·Pa^0.5), with propagated uncertainty."""
+    time_lag_s: float | None
+    """Permeation time lag τ, or None when no valid lag was extractable
+    (e.g. the steady-state fit extrapolates below the baseline)."""
+    diffusivity_m2_per_s: float | None
+    """D = e²/(6τ); None whenever the time lag is."""
+    solubility: UFloat | None
+    """S = Φ/D, H/(m³·Pa^0.5); None whenever the time lag is."""
+    permeation_start_s: float
+    """When upstream pressure was applied to the sample (time-lag zero)."""
+    permeation_start_source: str
+    """``"v3_open_time"`` (loading-valve event) or ``"window_start"``."""
+    downstream_baseline_torr: float
+    """Pre-breakthrough downstream pressure used for the time-lag intercept."""
     furnace_setpoint: float | None
     valve_times_s: dict[str, float]
 
@@ -152,6 +169,25 @@ class ProcessedRun:
                     "nominal": self.permeability.nominal_value,
                     "std_dev": self.permeability.std_dev,
                     "units": "H/(m·s·Pa^0.5)",
+                },
+                "time_lag": {
+                    "time_lag_s": self.time_lag_s,
+                    "permeation_start_s": self.permeation_start_s,
+                    "permeation_start_source": self.permeation_start_source,
+                    "baseline_torr": self.downstream_baseline_torr,
+                },
+                "diffusivity": {
+                    "value": self.diffusivity_m2_per_s,
+                    "units": "m^2/s",
+                },
+                "solubility": {
+                    "nominal": None
+                    if self.solubility is None
+                    else self.solubility.nominal_value,
+                    "std_dev": None
+                    if self.solubility is None
+                    else self.solubility.std_dev,
+                    "units": "H/(m^3·Pa^0.5)",
                 },
             },
         }
@@ -243,6 +279,31 @@ def process_run(
         rig=rig,
     )
 
+    # Time-lag method: τ from the steady-state fit's baseline crossing,
+    # counted from the loading-valve opening; then D = e²/6τ and S = Φ/D.
+    if "v3_open_time" in run.valve_times_s:
+        permeation_start_s = run.valve_times_s["v3_open_time"]
+        permeation_start_source = "v3_open_time"
+    else:
+        permeation_start_s = float(time_in[0])
+        permeation_start_source = "window_start"
+    baseline_torr = downstream_baseline_torr(
+        run.time_s, downstream_torr, permeation_start_s
+    )
+    if fit.slope_torr_per_s > 0:
+        time_lag_s = time_lag_from_fit(fit, baseline_torr, permeation_start_s)
+    else:
+        time_lag_s = 0.0  # no rising signal — handled as degenerate below
+    if time_lag_s > 0:
+        diffusivity = diffusivity_from_time_lag(time_lag_s, sample.thickness_m)
+        solubility = solubility_from_permeability(permeability, diffusivity)
+    else:
+        # Degenerate geometry (e.g. baseline above the fit at the start
+        # time) — report no lag rather than a nonsense diffusivity.
+        time_lag_s = None
+        diffusivity = None
+        solubility = None
+
     # Instantaneous apparent permeability over the run window (NaN outside).
     permeability_t = np.full(len(run.time_s), np.nan)
     permeability_t[in_run] = apparent_permeability_vs_time(
@@ -274,6 +335,12 @@ def process_run(
         sample_temperature_K=temperature_K,
         temperature_source=temperature_source,
         permeability=permeability,
+        time_lag_s=time_lag_s,
+        diffusivity_m2_per_s=diffusivity,
+        solubility=solubility,
+        permeation_start_s=permeation_start_s,
+        permeation_start_source=permeation_start_source,
+        downstream_baseline_torr=baseline_torr,
         furnace_setpoint=run.furnace_setpoint,
         valve_times_s=run.valve_times_s,
     )
