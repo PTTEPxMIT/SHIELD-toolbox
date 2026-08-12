@@ -37,6 +37,9 @@ p.write("processed_runs")                       # store the processed artifact
 
 Each step is documented in the sections below; once several runs are
 processed, [fit their temperature dependence](#campaign-analysis-arrhenius-fits-across-runs).
+For an executable walkthrough of the whole path — catalogue → fetch →
+process → overview figure → Arrhenius fit — open
+[`notebooks/example_run_analysis.ipynb`](notebooks/example_run_analysis.ipynb).
 
 ## Layout
 
