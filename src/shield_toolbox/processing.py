@@ -40,6 +40,7 @@ from shield_toolbox.analysis import (
     time_lag_from_fit,
 )
 from shield_toolbox.config import RigConfig, get_rig_config_for_date
+from shield_toolbox.constants import ZERO_CELSIUS_K
 from shield_toolbox.gauges import (
     Baratron626D,
     TypeKThermocouple,
@@ -378,8 +379,9 @@ def _sample_temperature(
     """Mean thermocouple temperature over the run window, else setpoint + offset.
 
     Thermocouple conversion currently omits cold-junction compensation
-    (matching the legacy analysis); pressure-only runs fall back to
-    ``furnace_setpoint + furnace_setpoint_offset_K``.
+    (matching the legacy analysis); pressure-only runs fall back to the
+    furnace setpoint (recorded in °C) converted to kelvin plus
+    ``furnace_setpoint_offset_K``.
     """
     if run.thermocouple_mv:
         mv = next(iter(run.thermocouple_mv.values()))
@@ -390,7 +392,7 @@ def _sample_temperature(
             f"Run {run.run_id} has neither thermocouple data nor a furnace "
             "setpoint — sample temperature unknown"
         )
-    return run.furnace_setpoint + rig.furnace_setpoint_offset_K, (
+    return run.furnace_setpoint + ZERO_CELSIUS_K + rig.furnace_setpoint_offset_K, (
         "furnace_setpoint_offset"
     )
 

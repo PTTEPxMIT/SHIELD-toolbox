@@ -16,6 +16,9 @@ N_A = 6.022e23
 TORR_TO_PA = 133.322
 """Pascals per Torr."""
 
+ZERO_CELSIUS_K = 273.15
+"""0 °C in kelvin."""
+
 PA_TO_TORR = 1.0 / TORR_TO_PA
 """Torr per Pascal."""
 

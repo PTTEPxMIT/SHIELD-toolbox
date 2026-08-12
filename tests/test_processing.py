@@ -62,8 +62,8 @@ def test_timeseries_columns_and_values(processed):
 
 
 def test_temperature_fallback_uses_setpoint_offset(processed):
-    # v1 offset is -18 K; fixture setpoint is 500.
-    assert processed.sample_temperature_K == pytest.approx(482.0)
+    # Fixture setpoint is 500 °C; v1 offset is -18 K: 500 + 273.15 - 18.
+    assert processed.sample_temperature_K == pytest.approx(755.15)
     assert processed.temperature_source == "furnace_setpoint_offset"
 
 
