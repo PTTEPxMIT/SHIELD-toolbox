@@ -218,4 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Processed run artifacts (local working copies; published via SHIELD-Data)
-processed_runs/
+processed_runs*/
+converted_runs/

@@ -64,7 +64,6 @@ class ProcessedRun:
     run_id: str
     sample: SampleInfo
     rig: RigConfig
-    source_format: str
     timeseries: pd.DataFrame
     """Columns: ``timestamp``, ``time_s``, one ``<gauge>_voltage_V`` per
     gauge, ``upstream_torr``/``upstream_err_torr``,
@@ -88,7 +87,6 @@ class ProcessedRun:
             "run_id": self.run_id,
             "sample": asdict(self.sample),
             "provenance": {
-                "source_format": self.source_format,
                 "rig_version": self.rig.version,
                 "toolbox_version": __version__,
                 "processed_utc": datetime.now(UTC).isoformat(),
@@ -208,7 +206,6 @@ def process_run(
         run_id=run.run_id,
         sample=sample,
         rig=rig,
-        source_format=run.format.value,
         timeseries=timeseries,
         upstream_plateau=plateau,
         downstream_fit=fit,
@@ -255,10 +252,9 @@ def _sample_temperature(
     (matching the legacy analysis); pressure-only runs fall back to
     ``furnace_setpoint + furnace_setpoint_offset_K``.
     """
-    if run.thermocouple_mv and run.thermocouple_time_s is not None:
+    if run.thermocouple_mv:
         mv = next(iter(run.thermocouple_mv.values()))
-        mv_in_run = np.interp(run.time_s[in_run], run.thermocouple_time_s, mv)
-        kelvin = np.asarray(rig.thermocouple.to_kelvin(mv_in_run), dtype=float)
+        kelvin = np.asarray(rig.thermocouple.to_kelvin(mv[in_run]), dtype=float)
         return float(np.mean(kelvin)), "thermocouple"
     if run.furnace_setpoint is None:
         raise ValueError(
@@ -287,13 +283,11 @@ def _build_timeseries(
     frame["downstream_torr"] = downstream_torr
     frame["downstream_err_torr"] = pressure_reading_error_torr(downstream_torr)
 
-    if run.thermocouple_mv and run.thermocouple_time_s is not None:
-        # Interpolate the (possibly offset) thermocouple axis onto the
-        # pressure axis; no cold-junction compensation (matches legacy).
+    if run.thermocouple_mv:
+        # No cold-junction compensation (matches legacy).
         mv = next(iter(run.thermocouple_mv.values()))
-        mv_on_pressure_axis = np.interp(run.time_s, run.thermocouple_time_s, mv)
         frame["temperature_K"] = np.asarray(
-            TypeKThermocouple().to_kelvin(mv_on_pressure_axis), dtype=float
+            TypeKThermocouple().to_kelvin(mv), dtype=float
         )
     else:
         frame["temperature_K"] = np.nan
