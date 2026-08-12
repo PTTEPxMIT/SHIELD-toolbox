@@ -75,6 +75,7 @@ def test_result_dict_contents(processed):
         "coating": "Al2O3",
         "thickness_m": 0.00088,
         "sample_id": "S-01",
+        "coating_layers": [],
     }
     assert result["provenance"]["rig_version"] == "v1"
     assert result["results"]["permeability"]["units"] == "H/(m·s·Pa^0.5)"
@@ -109,3 +110,69 @@ def test_saturated_window_is_excluded(fixtures_dir, tmp_path):
     assert processed.temperature_source == "thermocouple"
     # Thermocouple mV interpolated then converted; finite everywhere.
     assert np.isfinite(ts["temperature_K"]).all()
+
+
+# --- sample description from metadata ---------------------------------------
+
+
+V14_SAMPLE_FIELDS = {
+    "sample_substrate": "carbon steel",
+    "sample_coating": "800nm tungsten",
+    "sample_coating_layers": [{"material": "tungsten", "thickness_nm": 800}],
+    "sample_thickness": 0.00065,
+}
+
+
+def test_sample_info_from_v14_metadata():
+    sample = SampleInfo.from_metadata({"run_info": dict(V14_SAMPLE_FIELDS)})
+    assert sample == SampleInfo(
+        substrate="carbon steel",
+        coating="800nm tungsten",
+        thickness_m=0.00065,
+        coating_layers=({"material": "tungsten", "thickness_nm": 800},),
+    )
+
+
+def test_sample_info_from_legacy_material_fields():
+    v13 = SampleInfo.from_metadata(
+        {"run_info": {"sample_material": "316", "sample_thickness": 0.008}}
+    )
+    assert v13.substrate == "316"
+    assert v13.coating == "uncoated"
+    assert v13.thickness_m == 0.008
+    assert v13.coating_layers == ()
+
+    v10 = SampleInfo.from_metadata({"run_info": {"material": "steel"}})
+    assert v10.substrate == "steel"
+
+
+def test_sample_info_from_metadata_without_sample_returns_none():
+    assert SampleInfo.from_metadata({"run_info": {"date": "2025-10-06"}}) is None
+
+
+def test_process_run_defaults_to_metadata_sample(fixtures_dir, tmp_path):
+    run_dir = convert_run(
+        fixtures_dir / "pressure_only_run", tmp_path / "pressure_only_run"
+    )
+    metadata_path = run_dir / "run_metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["run_info"].update(V14_SAMPLE_FIELDS)
+    metadata_path.write_text(json.dumps(metadata))
+
+    processed = process_run(load_run(run_dir))
+
+    assert processed.sample.substrate == "carbon steel"
+    assert processed.sample.coating == "800nm tungsten"
+    assert processed.sample.thickness_m == 0.00065
+    result = processed.result_dict()
+    assert result["sample"]["coating_layers"] == [
+        {"material": "tungsten", "thickness_nm": 800}
+    ]
+
+
+def test_process_run_without_sample_or_metadata_raises(fixtures_dir, tmp_path):
+    run_dir = convert_run(
+        fixtures_dir / "pressure_only_run", tmp_path / "pressure_only_run"
+    )
+    with pytest.raises(ValueError, match="no sample description"):
+        process_run(load_run(run_dir))
