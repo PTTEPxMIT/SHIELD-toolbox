@@ -12,7 +12,13 @@ from shield_toolbox.config import (
     get_rig_config_for_date,
     list_rig_versions,
 )
-from shield_toolbox.io import PermeationRun, convert_run, fetch_run, load_run
+from shield_toolbox.io import (
+    PermeationRun,
+    convert_run,
+    fetch_run,
+    load_furnace_log,
+    load_run,
+)
 
 __version__ = _version("shield-toolbox")
 
@@ -38,6 +44,7 @@ __all__ = [
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",
+    "load_furnace_log",
     "load_results",
     "load_run",
     "process_run",

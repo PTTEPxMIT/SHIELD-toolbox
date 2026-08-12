@@ -171,6 +171,44 @@ coatings in one fit — filter first. CLI version:
 uv run python scripts/arrhenius.py processed_runs --substrate "316L steel" --show
 ```
 
+## Rig utilities: furnace logs & pump-down prediction
+
+**Furnace-controller logs.** The Eurotherm furnace controller exports its own
+logs (`LOG*.csv` / `TCCOMP*.csv`) independently of the DAS. Load them to
+check heating/cooling behaviour, or to calibrate the sample-vs-furnace
+temperature offset (the source of the `furnace_setpoint_offset_K = −18 K`
+fallback used for old runs without a sample thermocouple):
+
+```python
+from shield_toolbox import load_furnace_log
+from shield_toolbox.analysis import furnace_temperature_offset
+from shield_toolbox.plotting import plot_furnace_log
+
+furnace = load_furnace_log("Data/TCCOMP410292025182243.csv")
+plot_furnace_log(furnace)                      # measured PV vs working setpoint
+
+# With a simultaneous sample-thermocouple trace (°C, same clock):
+offset = furnace_temperature_offset(sample_temp_c, furnace["furnace_temperature_C"].iloc[-1])
+plot_furnace_log(furnace, sample_time_s=t_s, sample_temperature_c=sample_temp_c)
+```
+
+The offset is signed: negative means the sample runs cooler than the furnace.
+
+**Evacuation (pump-down) prediction.** Fit a measured pressure-decay trace to
+`p(t) = A·exp(−B·(t+C)) + D` and predict how long reaching a target vacuum
+takes — including for a scaled-up volume (the time constant V/q grows
+linearly with volume):
+
+```python
+from shield_toolbox.analysis import fit_evacuation
+from shield_toolbox.plotting import plot_evacuation
+
+fit = fit_evacuation(time_s, pressure_torr)     # times in seconds
+fit.time_to_reach(3e-6)                         # seconds to 3e-6 Torr
+fit.for_volume_ratio(100).time_to_reach(3e-6)   # same pump, 100× the volume
+plot_evacuation(time_s, pressure_torr, fit=fit, target_torr=3e-6)
+```
+
 ## Sample description (substrate + coating)
 
 Since run-metadata v1.4 the DAS records what was mounted on the rig, and the
