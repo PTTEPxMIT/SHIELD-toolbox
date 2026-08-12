@@ -29,6 +29,7 @@ from shield_toolbox import __version__
 from shield_toolbox.analysis import (
     DownstreamFit,
     UpstreamPlateau,
+    apparent_permeability_vs_time,
     fit_downstream_rise,
     permeability_takaishi_sensui,
     run_window_mask,
@@ -198,8 +199,25 @@ def process_run(
         rig=rig,
     )
 
+    # Instantaneous apparent permeability over the run window (NaN outside).
+    permeability_t = np.full(len(run.time_s), np.nan)
+    permeability_t[in_run] = apparent_permeability_vs_time(
+        time_in,
+        downstream_torr[in_run],
+        upstream_pressure_torr=plateau.average_torr,
+        temperature_K=temperature_K,
+        sample_thickness_m=sample.thickness_m,
+        rig=rig,
+    )
+
     timeseries = _build_timeseries(
-        run, upstream_torr, downstream_torr, temperature_K, in_run, fit_used
+        run,
+        upstream_torr,
+        downstream_torr,
+        temperature_K,
+        in_run,
+        fit_used,
+        permeability_t,
     )
 
     return ProcessedRun(
@@ -273,6 +291,7 @@ def _build_timeseries(
     temperature_K: float,
     in_run: np.ndarray,
     fit_used: np.ndarray,
+    permeability_t: np.ndarray,
 ) -> pd.DataFrame:
     frame = pd.DataFrame(
         {"timestamp": run.timestamps, "time_s": run.time_s}
@@ -292,6 +311,7 @@ def _build_timeseries(
     else:
         frame["temperature_K"] = np.nan
 
+    frame["apparent_permeability"] = permeability_t
     frame["in_run"] = in_run
     frame["fit_used"] = fit_used
     return frame

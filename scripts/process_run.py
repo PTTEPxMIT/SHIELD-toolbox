@@ -80,7 +80,7 @@ def main() -> None:
         print(f"  permeability   : {perm:.2e} H/(m·s·Pa^0.5)")
         print(f"  written to     : {out_dir}")
 
-        fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+        fig, axes = plt.subplots(2, 2, figsize=(11, 8))
         plot_run_overview(processed, axes=axes)
         fig.tight_layout()
         if args.save_plots:
