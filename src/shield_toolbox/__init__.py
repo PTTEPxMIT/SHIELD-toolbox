@@ -16,14 +16,23 @@ from shield_toolbox.io import PermeationRun, RunFormat, detect_run_format, load_
 
 __version__ = _version("shield-toolbox")
 
+from shield_toolbox.processing import (  # noqa: E402  (needs __version__)
+    ProcessedRun,
+    SampleInfo,
+    process_run,
+)
+
 __all__ = [
     "PermeationRun",
+    "ProcessedRun",
     "RigConfig",
     "RunFormat",
+    "SampleInfo",
     "__version__",
     "detect_run_format",
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",
     "load_run",
+    "process_run",
 ]

@@ -141,3 +141,13 @@ class TypeKThermocouple:
 
     def to_kelvin(self, millivolts: npt.ArrayLike) -> np.ndarray | float:
         return self.to_celsius(millivolts) + 273.15
+
+
+def pressure_reading_error_torr(pressure_torr: npt.ArrayLike) -> np.ndarray:
+    """Measurement uncertainty of a Baratron pressure reading, in Torr.
+
+    Manufacturer accuracy: 0.5 % of reading at or below 1 Torr, 0.25 % of
+    reading above 1 Torr. Same model as the legacy analysis.
+    """
+    pressure = np.asarray(pressure_torr, dtype=float)
+    return np.where(pressure > 1.0, pressure * 0.0025, pressure * 0.005)

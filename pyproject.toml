@@ -18,6 +18,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "uncertainties",
+    "pyarrow",
 ]
 
 [project.urls]
