@@ -57,6 +57,51 @@ print(sd.catalogue()[["run_id", "date", "furnace_setpoint"]])
 > crashes under CoreFoundation. `shield_data` is unaffected. Processing work
 > that only needs the served data is fine on macOS.
 
+## Loading run data
+
+Every analysis starts from a `PermeationRun` — the raw recorded run (timestamps,
+gauge voltages, valve events, metadata). There are two ways to get one:
+
+**Fetch a stored run by ID** (the normal route — no manual downloads):
+
+```python
+import shield_data as sd
+from shield_toolbox import fetch_run
+
+sd.catalogue()                # browse stored runs: run_id, date, substrate, coating, ...
+run = fetch_run("25.10.06_run_1_10h41")
+```
+
+`fetch_run` uses the `shield_data` package to download the run from the
+SHIELD-Data GitHub repo (sha256-verified, cached per-user, so each run is
+downloaded once). Inside a SHIELD-Data checkout it reads `run_data/` directly
+with no network at all.
+
+**Load a local run directory**:
+
+```python
+from shield_toolbox import load_run
+
+run = load_run("../SHIELD-Data/run_data/25.10.06_run_1_10h41")  # stored layout
+run = load_run("results/25.10.06/run_1_10h41")                  # fresh rig output
+```
+
+`load_run` accepts both on-disk layouts — `measurements.parquet` as stored in
+SHIELD-Data, and `shield_data.csv` as written by the DAS on the rig — paired
+with their `run_metadata.json`. Old-generation directories
+(`pressure_gauge_data.csv` [+ `thermocouple_data.csv`]) need a one-time
+upgrade first:
+
+```python
+from shield_toolbox import convert_run
+
+convert_run("old_run_dir")                    # in place
+# or in bulk: uv run python scripts/convert_runs.py <dirs...> --dest converted_runs
+```
+
+However it was loaded, the resulting `PermeationRun` is identical, so
+everything downstream (`process_run`, plotting) behaves the same.
+
 ## Sample description (substrate + coating)
 
 Since run-metadata v1.4 the DAS records what was mounted on the rig, and the
