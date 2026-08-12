@@ -16,6 +16,28 @@ This repo is one of three that make up the SHIELD software stack. They are kept
 
 **Data flow:** DAS records → Data stores/serves → toolbox processes.
 
+## Quick start
+
+From run ID to material properties in a few lines (after the
+[setup](#local-development-setup) below):
+
+```python
+import shield_data as sd
+from shield_toolbox import fetch_run, process_run
+from shield_toolbox.plotting import plot_run_overview
+
+sd.catalogue()                                  # what runs exist?
+p = process_run(fetch_run("25.10.06_run_1_10h41"))
+p.permeability                                  # Φ  (2.69±0.53)e+12 H/(m·s·Pa^0.5)
+p.diffusivity_m2_per_s                          # D  1.22e-10 m²/s (time-lag method)
+p.solubility                                    # S = Φ/D  (2.20±0.44)e+22 H/(m³·Pa^0.5)
+plot_run_overview(p)                            # 2×2 diagnostic figure
+p.write("processed_runs")                       # store the processed artifact
+```
+
+Each step is documented in the sections below; once several runs are
+processed, [fit their temperature dependence](#campaign-analysis-arrhenius-fits-across-runs).
+
 ## Layout
 
 ```
