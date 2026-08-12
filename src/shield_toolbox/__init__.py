@@ -12,7 +12,7 @@ from shield_toolbox.config import (
     get_rig_config_for_date,
     list_rig_versions,
 )
-from shield_toolbox.io import PermeationRun, convert_run, load_run
+from shield_toolbox.io import PermeationRun, convert_run, fetch_run, load_run
 
 __version__ = _version("shield-toolbox")
 
@@ -29,6 +29,7 @@ __all__ = [
     "SampleInfo",
     "__version__",
     "convert_run",
+    "fetch_run",
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",

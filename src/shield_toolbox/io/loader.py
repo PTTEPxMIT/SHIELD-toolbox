@@ -1,10 +1,16 @@
 """Load a recorded SHIELD run from disk.
 
-Only the canonical layout is supported — ``shield_data.csv`` +
-``run_metadata.json``, as written by the current DAS recorder. Old-generation
-directories (``pressure_gauge_data.csv`` [+ ``thermocouple_data.csv``]) must
-be converted once with :func:`shield_toolbox.io.convert_run` (or
-``scripts/convert_runs.py``).
+Two on-disk layouts are supported, both paired with ``run_metadata.json``:
+
+- ``shield_data.csv`` — as written by the DAS recorder on the rig.
+- ``measurements.parquet`` — as stored in SHIELD-Data's ``run_data/``
+  (the rig CSV converted losslessly at upload time).
+
+Old-generation directories (``pressure_gauge_data.csv``
+[+ ``thermocouple_data.csv``]) must be converted once with
+:func:`shield_toolbox.io.convert_run` (or ``scripts/convert_runs.py``).
+To download a stored run by ID instead of pointing at a directory, use
+:func:`shield_toolbox.io.fetch_run`.
 
 Column headers carry units on disk (``WGM701_Voltage (V)``,
 ``type K thermocouple_Voltage (mV)``, ``Local_temperature (C)``); some tools
@@ -33,41 +39,80 @@ _GAUGE_VOLTAGE_RE = re.compile(r"^(?P<name>.+?)_Voltage(?: \(V\)|_V)$")
 _TC_VOLTAGE_RE = re.compile(r"^(?P<name>.+?)_Voltage(?: \(mV\)|_mV)$")
 _LOCAL_TEMP_RE = re.compile(r"^Local_temperature(?: \(C\)|_C)$")
 
+STORED_PARQUET = "measurements.parquet"
+"""Measurements file of a run stored in SHIELD-Data (``run_data/<run_id>/``)."""
+
 
 def load_run(path: str | Path) -> PermeationRun:
-    """Load a canonical run directory into a :class:`PermeationRun`.
+    """Load a run directory into a :class:`PermeationRun`.
 
     Args:
-        path: Run directory containing ``shield_data.csv`` and
-            ``run_metadata.json``.
+        path: Run directory containing ``run_metadata.json`` plus either
+            ``shield_data.csv`` (rig layout) or ``measurements.parquet``
+            (SHIELD-Data stored layout).
 
     Returns:
         The loaded run. The time axis is seconds since the first sample;
         voltages are raw (V for gauges, mV for thermocouples).
 
     Raises:
-        FileNotFoundError: If the directory is not a canonical run — with a
+        FileNotFoundError: If the directory is not a loadable run — with a
             pointer to the converter when it holds an old-generation run.
     """
     path = Path(path)
     csv_path = path / CANONICAL_CSV
-    if not csv_path.is_file():
-        if (path / LEGACY_PRESSURE_CSV).is_file():
-            raise FileNotFoundError(
-                f"{path} is an old-format run ({LEGACY_PRESSURE_CSV}); "
-                "convert it once with shield_toolbox.io.convert_run() or "
-                "scripts/convert_runs.py"
-            )
+    parquet_path = path / STORED_PARQUET
+    if csv_path.is_file():
+        frame = pd.read_csv(csv_path)
+        source = csv_path
+    elif parquet_path.is_file():
+        frame = pd.read_parquet(parquet_path)
+        source = parquet_path
+    elif (path / LEGACY_PRESSURE_CSV).is_file():
         raise FileNotFoundError(
-            f"{path} is not a SHIELD run directory (no {CANONICAL_CSV})"
+            f"{path} is an old-format run ({LEGACY_PRESSURE_CSV}); "
+            "convert it once with shield_toolbox.io.convert_run() or "
+            "scripts/convert_runs.py"
+        )
+    else:
+        raise FileNotFoundError(
+            f"{path} is not a SHIELD run directory "
+            f"(no {CANONICAL_CSV} or {STORED_PARQUET})"
         )
     metadata = _load_metadata(path)
+    return run_from_frame(frame, metadata, path=path, source=source)
 
-    frame = pd.read_csv(csv_path)
-    frame.columns = [column.strip() for column in frame.columns]
+
+def run_from_frame(
+    frame: pd.DataFrame,
+    metadata: dict,
+    path: str | Path,
+    source: object = None,
+) -> PermeationRun:
+    """Build a :class:`PermeationRun` from an in-memory measurements table.
+
+    This is the shared core of :func:`load_run` and
+    :func:`shield_toolbox.io.fetch_run`. Columns that are neither the
+    timestamp nor a recognised voltage/temperature channel (e.g. the
+    ``run_id`` column ``shield_data.load`` appends) are ignored.
+
+    Args:
+        frame: Measurements, one row per tick, with a ``RealTimestamp``
+            column.
+        metadata: Parsed ``run_metadata.json`` contents.
+        path: Directory or identifier the run came from; becomes
+            ``PermeationRun.path`` and its name the ``run_id``.
+        source: Optional origin (file path, run ID) named in error messages.
+
+    Raises:
+        ValueError: If ``frame`` has no ``RealTimestamp`` column.
+    """
+    path = Path(path)
+    frame = frame.copy(deep=False)
+    frame.columns = [str(column).strip() for column in frame.columns]
     if _TIMESTAMP_COLUMN not in frame.columns:
         raise ValueError(
-            f"{csv_path} has no {_TIMESTAMP_COLUMN!r} column; "
+            f"{source or path} has no {_TIMESTAMP_COLUMN!r} column; "
             f"columns: {list(frame.columns)}"
         )
 

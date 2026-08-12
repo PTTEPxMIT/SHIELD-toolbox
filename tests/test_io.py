@@ -6,10 +6,16 @@ real DAS output (same headers and metadata shapes, made-up values);
 converter tests.
 """
 
+import json
+import shutil
+import sys
+import types
+
 import numpy as np
+import pandas as pd
 import pytest
 
-from shield_toolbox.io import PermeationRun, convert_run, load_run
+from shield_toolbox.io import PermeationRun, convert_run, fetch_run, load_run
 
 
 @pytest.fixture
@@ -95,4 +101,76 @@ def test_top_level_exports():
 
     assert shield_toolbox.load_run is load_run
     assert shield_toolbox.convert_run is convert_run
+    assert shield_toolbox.fetch_run is fetch_run
     assert shield_toolbox.PermeationRun is PermeationRun
+
+
+@pytest.fixture
+def stored_parquet_run(fixtures_dir, tmp_path):
+    """The combined_run fixture rewritten in the SHIELD-Data stored layout
+    (measurements.parquet + run_metadata.json)."""
+    run_dir = tmp_path / "25.10.06_run_1_10h41"
+    run_dir.mkdir()
+    frame = pd.read_csv(fixtures_dir / "combined_run" / "shield_data.csv")
+    frame["RealTimestamp"] = pd.to_datetime(frame["RealTimestamp"])
+    frame.to_parquet(run_dir / "measurements.parquet", index=False)
+    shutil.copy2(
+        fixtures_dir / "combined_run" / "run_metadata.json",
+        run_dir / "run_metadata.json",
+    )
+    return run_dir
+
+
+def test_load_stored_parquet_run_matches_csv(combined_run, stored_parquet_run):
+    run = load_run(stored_parquet_run)
+    assert run.run_id == "25.10.06_run_1_10h41"
+    assert set(run.gauge_voltages) == set(combined_run.gauge_voltages)
+    for name, trace in combined_run.gauge_voltages.items():
+        np.testing.assert_allclose(run.voltage(name), trace)
+    np.testing.assert_allclose(run.time_s, combined_run.time_s)
+    np.testing.assert_allclose(
+        run.local_temperature_c, combined_run.local_temperature_c
+    )
+
+
+def test_csv_takes_precedence_over_parquet(fixtures_dir, stored_parquet_run):
+    # A dir holding both layouts (e.g. a converted checkout) loads the rig CSV.
+    shutil.copy2(
+        fixtures_dir / "combined_run" / "shield_data.csv",
+        stored_parquet_run / "shield_data.csv",
+    )
+    assert load_run(stored_parquet_run).gauge_voltages
+
+
+@pytest.fixture
+def fake_shield_data(fixtures_dir, monkeypatch):
+    """A stand-in shield_data module serving the combined_run fixture."""
+    frame = pd.read_csv(fixtures_dir / "combined_run" / "shield_data.csv")
+    frame["RealTimestamp"] = pd.to_datetime(frame["RealTimestamp"])
+    frame["run_id"] = "combined_run"  # sd.load appends this column
+    with open(fixtures_dir / "combined_run" / "run_metadata.json") as f:
+        metadata = json.load(f)
+
+    module = types.ModuleType("shield_data")
+    module.load = lambda run_id: frame
+    module.load_metadata = lambda run_id: metadata
+    monkeypatch.setitem(sys.modules, "shield_data", module)
+    return module
+
+
+def test_fetch_run(fake_shield_data, combined_run):
+    run = fetch_run("combined_run")
+    assert isinstance(run, PermeationRun)
+    assert run.run_id == "combined_run"
+    assert set(run.gauge_voltages) == set(combined_run.gauge_voltages)
+    for name, trace in combined_run.gauge_voltages.items():
+        np.testing.assert_allclose(run.voltage(name), trace)
+    assert run.valve_times_s == combined_run.valve_times_s
+    # The appended run_id column is ignored, not parsed as a channel.
+    assert "run_id" not in run.gauge_voltages
+
+
+def test_fetch_run_without_shield_data_raises(monkeypatch):
+    monkeypatch.setitem(sys.modules, "shield_data", None)
+    with pytest.raises(ImportError, match="SHIELD-Data"):
+        fetch_run("combined_run")
