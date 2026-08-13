@@ -65,17 +65,17 @@ gauge voltages, valve events, metadata). There are two ways to get one:
 **Fetch a stored run by ID** (the normal route — no manual downloads):
 
 ```python
-import shield_data as sd
 from shield_toolbox import fetch_run
 
-sd.catalogue()                # browse stored runs: run_id, date, substrate, coating, ...
 run = fetch_run("25.10.06_run_1_10h41")
 ```
 
-`fetch_run` uses the `shield_data` package to download the run from the
-SHIELD-Data GitHub repo (sha256-verified, cached per-user, so each run is
-downloaded once). Inside a SHIELD-Data checkout it reads `run_data/` directly
-with no network at all.
+`fetch_run` pulls the run from SHIELD-Data via the `shield_data` package
+(sha256-verified, cached per-user, so each run is downloaded once). Browsing
+the stored runs (`sd.catalogue()`), filtering them, and everything else about
+raw data access is `shield_data`'s job — see the
+[SHIELD-Data README](https://github.com/PTTEPxMIT/SHIELD-Data#quick-start)
+for that.
 
 **Load a local run directory**:
 
@@ -101,6 +101,75 @@ convert_run("old_run_dir")                    # in place
 
 However it was loaded, the resulting `PermeationRun` is identical, so
 everything downstream (`process_run`, plotting) behaves the same.
+
+## Processing a run: Φ, τ, D, S
+
+`process_run` turns a loaded run into a `ProcessedRun`: it calibrates the
+Baratron voltages to pressures, restricts analysis to the valid run window
+(after the upstream gauge comes off its saturation cap), averages the stable
+upstream plateau, fits the steady-state downstream rise, and extracts the
+transport properties:
+
+- **Permeability Φ** from the rise slope (Takaishi–Sensui
+  thermal-transpiration corrected, uncertainty propagated), H/(m·s·Pa^0.5)
+- **Time lag τ** from where the steady-state fit extrapolates back to the
+  pre-breakthrough baseline, measured from the loading-valve opening
+  (`v3_open_time`)
+- **Diffusivity D = e²/(6τ)**, m²/s
+- **Solubility S = Φ/D**, H/(m³·Pa^0.5)
+
+```python
+from shield_toolbox import fetch_run, process_run
+from shield_toolbox.plotting import plot_run_overview
+
+processed = process_run(fetch_run("25.10.06_run_1_10h41"))
+print(processed.permeability)         # (2.69+/-0.53)e+12
+print(processed.time_lag_s)           # 1055.9
+print(processed.diffusivity_m2_per_s) # 1.22e-10
+print(processed.solubility)           # (2.20+/-0.44)e+22
+
+processed.write("processed_runs")     # <base>/<substrate>/<coating>/<run_id>/
+plot_run_overview(processed)          # 2×2: upstream, downstream, T, Φ(t)
+```
+
+The sample description (substrate/coating/thickness) comes from the run
+metadata automatically; the rig constants come from the versioned rig config
+for the run date. `write()` stores `timeseries.parquet` (full processed time
+series) and `result.json` (all scalar results + provenance). Runs where no
+valid time lag exists (e.g. the fit extrapolates below the baseline) store
+`null` for τ/D/S rather than a nonsense number.
+
+Command-line equivalent for one or many runs:
+
+```bash
+uv run python scripts/process_run.py ../SHIELD-Data/run_data/25.10.06_run_1_10h41 --show
+```
+
+## Campaign analysis: Arrhenius fits across runs
+
+Once several runs of the same sample are processed, aggregate them and fit
+the temperature dependence of any extracted property:
+
+```python
+from shield_toolbox import arrhenius, load_results
+from shield_toolbox.plotting import plot_arrhenius
+
+results = load_results("processed_runs", substrate="316L steel", coating="none")
+fit = arrhenius(results, quantity="permeability")   # or "diffusivity" / "solubility"
+print(fit.activation_energy_J_per_mol / 1000)        # kJ/mol
+print(fit.pre_exponential)
+
+plot_arrhenius(results, fit=fit)                     # log(Φ) vs 1000/T, Ea in legend
+```
+
+`load_results` walks the `processed_runs/` tree back into one row-per-run
+DataFrame (temperature, Φ, τ, D, S, with uncertainties); `arrhenius` runs an
+uncertainty-weighted fit of ln(property) vs 1/T. Don't mix substrates or
+coatings in one fit — filter first. CLI version:
+
+```bash
+uv run python scripts/arrhenius.py processed_runs --substrate "316L steel" --show
+```
 
 ## Sample description (substrate + coating)
 
