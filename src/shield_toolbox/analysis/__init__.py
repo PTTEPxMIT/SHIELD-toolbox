@@ -1,5 +1,7 @@
 """Pure physics functions: no file I/O, no plotting."""
 
+from shield_toolbox.analysis.evacuation import EvacuationFit, fit_evacuation
+from shield_toolbox.analysis.furnace import furnace_temperature_offset
 from shield_toolbox.analysis.steady_state import (
     ArrheniusFit,
     DownstreamFit,
@@ -24,12 +26,15 @@ from shield_toolbox.analysis.window import run_window_mask
 __all__ = [
     "ArrheniusFit",
     "DownstreamFit",
+    "EvacuationFit",
     "UpstreamPlateau",
     "apparent_permeability_vs_time",
     "diffusivity_from_time_lag",
     "downstream_baseline_torr",
     "fit_arrhenius",
     "fit_downstream_rise",
+    "fit_evacuation",
+    "furnace_temperature_offset",
     "permeability_takaishi_sensui",
     "run_window_mask",
     "smoothed_pressure_rise_pa_per_s",

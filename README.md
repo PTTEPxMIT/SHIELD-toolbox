@@ -16,6 +16,28 @@ This repo is one of three that make up the SHIELD software stack. They are kept
 
 **Data flow:** DAS records → Data stores/serves → toolbox processes.
 
+## Quick start
+
+From run ID to material properties in a few lines (after the
+[setup](#local-development-setup) below):
+
+```python
+import shield_data as sd
+from shield_toolbox import fetch_run, process_run
+from shield_toolbox.plotting import plot_run_overview
+
+sd.catalogue()                                  # what runs exist?
+p = process_run(fetch_run("25.10.06_run_1_10h41"))
+p.permeability                                  # Φ  (2.69±0.53)e+12 H/(m·s·Pa^0.5)
+p.diffusivity_m2_per_s                          # D  1.22e-10 m²/s (time-lag method)
+p.solubility                                    # S = Φ/D  (2.20±0.44)e+22 H/(m³·Pa^0.5)
+plot_run_overview(p)                            # 2×2 diagnostic figure
+p.write("processed_runs")                       # store the processed artifact
+```
+
+Each step is documented in the sections below; once several runs are
+processed, [fit their temperature dependence](#campaign-analysis-arrhenius-fits-across-runs).
+
 ## Layout
 
 ```
@@ -169,6 +191,44 @@ coatings in one fit — filter first. CLI version:
 
 ```bash
 uv run python scripts/arrhenius.py processed_runs --substrate "316L steel" --show
+```
+
+## Rig utilities: furnace logs & pump-down prediction
+
+**Furnace-controller logs.** The Eurotherm furnace controller exports its own
+logs (`LOG*.csv` / `TCCOMP*.csv`) independently of the DAS. Load them to
+check heating/cooling behaviour, or to calibrate the sample-vs-furnace
+temperature offset (the source of the `furnace_setpoint_offset_K = −18 K`
+fallback used for old runs without a sample thermocouple):
+
+```python
+from shield_toolbox import load_furnace_log
+from shield_toolbox.analysis import furnace_temperature_offset
+from shield_toolbox.plotting import plot_furnace_log
+
+furnace = load_furnace_log("Data/TCCOMP410292025182243.csv")
+plot_furnace_log(furnace)                      # measured PV vs working setpoint
+
+# With a simultaneous sample-thermocouple trace (°C, same clock):
+offset = furnace_temperature_offset(sample_temp_c, furnace["furnace_temperature_C"].iloc[-1])
+plot_furnace_log(furnace, sample_time_s=t_s, sample_temperature_c=sample_temp_c)
+```
+
+The offset is signed: negative means the sample runs cooler than the furnace.
+
+**Evacuation (pump-down) prediction.** Fit a measured pressure-decay trace to
+`p(t) = A·exp(−B·(t+C)) + D` and predict how long reaching a target vacuum
+takes — including for a scaled-up volume (the time constant V/q grows
+linearly with volume):
+
+```python
+from shield_toolbox.analysis import fit_evacuation
+from shield_toolbox.plotting import plot_evacuation
+
+fit = fit_evacuation(time_s, pressure_torr)     # times in seconds
+fit.time_to_reach(3e-6)                         # seconds to 3e-6 Torr
+fit.for_volume_ratio(100).time_to_reach(3e-6)   # same pump, 100× the volume
+plot_evacuation(time_s, pressure_torr, fit=fit, target_torr=3e-6)
 ```
 
 ## Sample description (substrate + coating)
