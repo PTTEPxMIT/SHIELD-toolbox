@@ -65,17 +65,17 @@ gauge voltages, valve events, metadata). There are two ways to get one:
 **Fetch a stored run by ID** (the normal route — no manual downloads):
 
 ```python
-import shield_data as sd
 from shield_toolbox import fetch_run
 
-sd.catalogue()                # browse stored runs: run_id, date, substrate, coating, ...
 run = fetch_run("25.10.06_run_1_10h41")
 ```
 
-`fetch_run` uses the `shield_data` package to download the run from the
-SHIELD-Data GitHub repo (sha256-verified, cached per-user, so each run is
-downloaded once). Inside a SHIELD-Data checkout it reads `run_data/` directly
-with no network at all.
+`fetch_run` pulls the run from SHIELD-Data via the `shield_data` package
+(sha256-verified, cached per-user, so each run is downloaded once). Browsing
+the stored runs (`sd.catalogue()`), filtering them, and everything else about
+raw data access is `shield_data`'s job — see the
+[SHIELD-Data README](https://github.com/PTTEPxMIT/SHIELD-Data#quick-start)
+for that.
 
 **Load a local run directory**:
 
