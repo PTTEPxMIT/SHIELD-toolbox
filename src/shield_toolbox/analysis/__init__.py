@@ -2,6 +2,11 @@
 
 from shield_toolbox.analysis.evacuation import EvacuationFit, fit_evacuation
 from shield_toolbox.analysis.furnace import furnace_temperature_offset
+from shield_toolbox.analysis.regime import (
+    dissociation_coeff,
+    fit_pressure_exponent,
+    recombination_coeff,
+)
 from shield_toolbox.analysis.steady_state import (
     ArrheniusFit,
     DownstreamFit,
@@ -30,12 +35,15 @@ __all__ = [
     "UpstreamPlateau",
     "apparent_permeability_vs_time",
     "diffusivity_from_time_lag",
+    "dissociation_coeff",
     "downstream_baseline_torr",
     "fit_arrhenius",
     "fit_downstream_rise",
     "fit_evacuation",
+    "fit_pressure_exponent",
     "furnace_temperature_offset",
     "permeability_takaishi_sensui",
+    "recombination_coeff",
     "run_window_mask",
     "smoothed_pressure_rise_pa_per_s",
     "solubility_from_permeability",
