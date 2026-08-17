@@ -37,9 +37,16 @@ p.write("processed_runs")                       # store the processed artifact
 
 Each step is documented in the sections below; once several runs are
 processed, [fit their temperature dependence](#campaign-analysis-arrhenius-fits-across-runs).
-For an executable walkthrough of the whole path — catalogue → fetch →
-process → overview figure → Arrhenius fit — open
-[`notebooks/example_run_analysis.ipynb`](notebooks/example_run_analysis.ipynb).
+Three executable walkthroughs cover the full workflow:
+[`notebooks/regime_analysis.ipynb`](notebooks/regime_analysis.ipynb) decides
+from a pressure sweep whether runs are diffusion- or surface-limited — the
+check that determines which extraction applies;
+[`notebooks/diffusion_limited_analysis.ipynb`](notebooks/diffusion_limited_analysis.ipynb)
+walks the standard path above (catalogue → fetch → process → overview →
+Arrhenius); and
+[`notebooks/surface_limited_analysis.ipynb`](notebooks/surface_limited_analysis.ipynb)
+extracts the surface coefficients K_d and K_r when diffusion is not the
+bottleneck.
 
 ## Layout
 
