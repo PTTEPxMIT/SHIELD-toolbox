@@ -53,6 +53,12 @@ class PermeationRun:
         return datetime.fromisoformat(raw)
 
     @property
+    def run_type(self) -> str | None:
+        """The recorder's ``run_type`` (``"permeation_exp"``, ``"leak_test"``,
+        ``"test_mode"``), if present in the metadata."""
+        return self.metadata.get("run_info", {}).get("run_type")
+
+    @property
     def furnace_setpoint(self) -> float | None:
         """Furnace setpoint as recorded in the metadata."""
         value = self.metadata.get("run_info", {}).get("furnace_setpoint")

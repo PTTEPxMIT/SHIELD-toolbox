@@ -39,12 +39,15 @@ def load_results(
         coating: Keep only runs with this coating (exact match).
 
     Returns:
-        One row per processed run, sorted by temperature: ``run_id``,
-        ``substrate``, ``coating``, ``thickness_m``, ``temperature_K``,
+        One row per processed permeation run (stored leak-test results are
+        skipped), sorted by temperature: ``run_id``, ``substrate``,
+        ``coating``, ``sample_id``, ``thickness_m``, ``temperature_K``,
         ``temperature_source``, ``upstream_torr``, ``permeability`` /
         ``permeability_err``, ``time_lag_s``, ``diffusivity_m2_per_s``,
         ``solubility`` / ``solubility_err`` (NaN where a run has no valid
-        time lag), ``furnace_setpoint``, and ``result_path``.
+        time lag), ``leak_rate_torr_per_s`` / ``leak_test_run_id`` (the
+        background-leak correction applied, None when uncorrected),
+        ``furnace_setpoint``, and ``result_path``.
 
     Raises:
         FileNotFoundError: If no ``result.json`` is found under ``base_dir``
@@ -54,6 +57,8 @@ def load_results(
     for result_path in sorted(Path(base_dir).rglob(RESULT_FILENAME)):
         with open(result_path) as f:
             result = json.load(f)
+        if result.get("run_type") == "leak_test":
+            continue
         sample = result.get("sample", {})
         if substrate is not None and sample.get("substrate") != substrate:
             continue
@@ -65,6 +70,7 @@ def load_results(
                 "run_id": result.get("run_id"),
                 "substrate": sample.get("substrate"),
                 "coating": sample.get("coating"),
+                "sample_id": sample.get("sample_id"),
                 "thickness_m": sample.get("thickness_m"),
                 "temperature_K": result.get("temperature", {}).get(
                     "sample_temperature_K"
@@ -77,6 +83,8 @@ def load_results(
                 "diffusivity_m2_per_s": results.get("diffusivity", {}).get("value"),
                 "solubility": results.get("solubility", {}).get("nominal"),
                 "solubility_err": results.get("solubility", {}).get("std_dev"),
+                "leak_rate_torr_per_s": results.get("leak", {}).get("rate_torr_per_s"),
+                "leak_test_run_id": results.get("leak", {}).get("leak_test_run_id"),
                 "furnace_setpoint": result.get("run_info", {}).get("furnace_setpoint"),
                 "result_path": str(result_path),
             }

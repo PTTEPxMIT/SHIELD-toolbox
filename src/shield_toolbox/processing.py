@@ -28,11 +28,14 @@ from uncertainties import UFloat
 from shield_toolbox import __version__
 from shield_toolbox.analysis import (
     DownstreamFit,
+    LeakRateFit,
     UpstreamPlateau,
     apparent_permeability_vs_time,
     diffusivity_from_time_lag,
     downstream_baseline_torr,
     fit_downstream_rise,
+    fit_leak_rate,
+    leak_molar_rate_mol_per_s,
     permeability_takaishi_sensui,
     run_window_mask,
     solubility_from_permeability,
@@ -74,9 +77,10 @@ class SampleInfo:
     def from_metadata(cls, metadata: dict) -> SampleInfo | None:
         """Build the sample description from a run's metadata.
 
-        Reads the v1.4 sample fields, falling back to the substrate-only
-        ``material`` (v1.0) / ``sample_material`` (v1.3) names. Returns None
-        if the metadata carries no sample description at all.
+        Reads the v1.4 sample fields plus the v1.5 ``sample_id``, falling
+        back to the substrate-only ``material`` (v1.0) / ``sample_material``
+        (v1.3) names. Returns None if the metadata carries no sample
+        description at all.
         """
         run_info = metadata.get("run_info", {})
         substrate = run_info.get(
@@ -90,6 +94,7 @@ class SampleInfo:
             substrate=substrate,
             coating=run_info.get("sample_coating", defaults.coating),
             thickness_m=run_info.get("sample_thickness", defaults.thickness_m),
+            sample_id=run_info.get("sample_id"),
             coating_layers=tuple(run_info.get("sample_coating_layers", ())),
         )
 
@@ -128,6 +133,11 @@ class ProcessedRun:
     """Pre-breakthrough downstream pressure used for the time-lag intercept."""
     furnace_setpoint: float | None
     valve_times_s: dict[str, float]
+    leak_rate_torr_per_s: float | None = None
+    """Background leak rate (Torr/s) subtracted from the downstream trace
+    before fitting, or None when no leak correction was applied."""
+    leak_test_run_id: str | None = None
+    """Run ID of the leak test the correction came from, when known."""
 
     def result_dict(self) -> dict:
         """The scalar results and provenance, as written to ``result.json``."""
@@ -137,6 +147,7 @@ class ProcessedRun:
         sample["coating_layers"] = list(sample["coating_layers"])
         return {
             "run_id": self.run_id,
+            "run_type": "permeation_exp",
             "sample": sample,
             "provenance": {
                 "rig_version": self.rig.version,
@@ -162,6 +173,11 @@ class ProcessedRun:
                 "source": self.temperature_source,
             },
             "results": {
+                "leak": {
+                    "applied": self.leak_rate_torr_per_s is not None,
+                    "rate_torr_per_s": self.leak_rate_torr_per_s,
+                    "leak_test_run_id": self.leak_test_run_id,
+                },
                 "upstream_pressure_torr": self.upstream_plateau.average_torr,
                 "downstream_rise_torr_per_s": self.downstream_fit.slope_torr_per_s,
                 "downstream_fit_intercept_torr": self.downstream_fit.intercept_torr,
@@ -195,16 +211,7 @@ class ProcessedRun:
 
     def output_dir(self, base_dir: str | Path) -> Path:
         """``<base>/<substrate>/<coating>/<run_id>``, names made path-safe."""
-
-        def safe(name: str) -> str:
-            return name.strip().replace("/", "-").replace(" ", "_")
-
-        return (
-            Path(base_dir)
-            / safe(self.sample.substrate)
-            / safe(self.sample.coating)
-            / safe(self.run_id)
-        )
+        return _sample_output_dir(base_dir, self.sample, self.run_id)
 
     def write(self, base_dir: str | Path) -> Path:
         """Write ``timeseries.parquet`` + ``result.json``; returns the run dir."""
@@ -216,10 +223,168 @@ class ProcessedRun:
         return run_dir
 
 
+@dataclass(frozen=True)
+class LeakTestResult:
+    """A processed leak test: the background leak rate for one sample.
+
+    Produced by :func:`process_leak_test` from a ``run_type="leak_test"``
+    run — recorded with the sample installed and sealed, upstream
+    unpressurized, and the downstream volume isolated at a setpoint inside
+    the 1 Torr Baratron's range. Pass it to :func:`process_run` as ``leak=``
+    to correct subsequent permeation runs on the same sample.
+    """
+
+    run_id: str
+    sample: SampleInfo
+    rig: RigConfig
+    timeseries: pd.DataFrame
+    """Columns: ``timestamp``, ``time_s``, one ``<gauge>_voltage_V`` per
+    gauge, ``downstream_torr``/``downstream_err_torr``, ``fit_used``."""
+    fit: LeakRateFit
+    measurement_start_s: float
+    """Start of the fitted window on the run's time axis."""
+    measurement_start_source: str
+    """``"downstream_isolated_time"`` (spacebar event) or ``"trace_start"``."""
+    downstream_setpoint_torr: float | None
+    """The setpoint recorded by the DAS, if any."""
+    furnace_setpoint: float | None
+
+    @property
+    def rate_torr_per_s(self) -> float:
+        """The background leak rate, in Torr/s."""
+        return self.fit.rate_torr_per_s
+
+    def result_dict(self) -> dict:
+        """The scalar results and provenance, as written to ``result.json``."""
+        time_s = self.timeseries["time_s"].to_numpy()
+        sample = asdict(self.sample)
+        sample["coating_layers"] = list(sample["coating_layers"])
+        molar_rate = leak_molar_rate_mol_per_s(self.fit.rate_torr_per_s, self.rig)
+        return {
+            "run_id": self.run_id,
+            "run_type": "leak_test",
+            "sample": sample,
+            "provenance": {
+                "rig_version": self.rig.version,
+                "toolbox_version": __version__,
+                "processed_utc": datetime.now(UTC).isoformat(),
+            },
+            "run_info": {
+                "furnace_setpoint": self.furnace_setpoint,
+                "downstream_setpoint_torr": self.downstream_setpoint_torr,
+                "duration_s": float(time_s[-1]),
+                "n_samples": int(len(time_s)),
+            },
+            "results": {
+                "leak_rate_torr_per_s": self.fit.rate_torr_per_s,
+                "leak_molar_rate": {
+                    "nominal": molar_rate.nominal_value,
+                    "std_dev": molar_rate.std_dev,
+                    "units": "mol/s",
+                },
+                "intercept_torr": self.fit.intercept_torr,
+                "mean_pressure_torr": self.fit.mean_pressure_torr,
+                "r_squared": self.fit.r_squared,
+                "n_fit_samples": int(self.fit.used.sum()),
+                "measurement_start_s": self.measurement_start_s,
+                "measurement_start_source": self.measurement_start_source,
+            },
+        }
+
+    def output_dir(self, base_dir: str | Path) -> Path:
+        """``<base>/<substrate>/<coating>/<run_id>``, names made path-safe."""
+        return _sample_output_dir(base_dir, self.sample, self.run_id)
+
+    def write(self, base_dir: str | Path) -> Path:
+        """Write ``timeseries.parquet`` + ``result.json``; returns the run dir."""
+        run_dir = self.output_dir(base_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.timeseries.to_parquet(run_dir / TIMESERIES_FILENAME, index=False)
+        with open(run_dir / RESULT_FILENAME, "w") as f:
+            json.dump(self.result_dict(), f, indent=2)
+        return run_dir
+
+
+def process_leak_test(
+    run: PermeationRun,
+    sample: SampleInfo | None = None,
+    rig: RigConfig | None = None,
+) -> LeakTestResult:
+    """Process a leak-test run into the sample's background leak rate.
+
+    Fits a straight line to the downstream Baratron pressure from the
+    ``downstream_isolated_time`` spacebar event (start of the trace when the
+    event was not recorded) to the end of the run. The permeation-analysis
+    machinery (run window, reliable-band fit) is deliberately not used: a
+    leak test has no upstream charge and may sit below the permeation fit's
+    reliability floor.
+
+    Args:
+        run: The loaded leak-test run.
+        sample: Sample mounted during the test; defaults to the metadata's
+            sample description. Its ``sample_id`` is what pairs this leak
+            test with later permeation runs.
+        rig: Rig configuration; defaults to the one in service on the run
+            date.
+
+    Raises:
+        ValueError: If the metadata says the run is not a leak test, if the
+            run has no downstream Baratron, or if ``sample`` is omitted and
+            the metadata records no sample description.
+    """
+    run_type = run.metadata.get("run_info", {}).get("run_type")
+    if run_type is not None and run_type != "leak_test":
+        raise ValueError(
+            f"Run {run.run_id} is a {run_type!r} run, not a leak test — "
+            "use process_run for permeation runs"
+        )
+    if sample is None:
+        sample = SampleInfo.from_metadata(run.metadata)
+        if sample is None:
+            raise ValueError(
+                f"Run {run.run_id}: metadata has no sample description — "
+                "pass sample=SampleInfo(...) explicitly"
+            )
+    if rig is None:
+        rig = get_rig_config_for_date(_run_date(run))
+
+    _, downstream_torr = _baratron_pressure(run, "downstream")
+
+    if "downstream_isolated_time" in run.valve_times_s:
+        start_s = run.valve_times_s["downstream_isolated_time"]
+        start_source = "downstream_isolated_time"
+    else:
+        start_s = float(run.time_s[0])
+        start_source = "trace_start"
+    fit = fit_leak_rate(run.time_s, downstream_torr, start_s=start_s)
+
+    timeseries = pd.DataFrame(
+        {"timestamp": run.timestamps, "time_s": run.time_s}
+        | {f"{name}_voltage_V": trace for name, trace in run.gauge_voltages.items()}
+    )
+    timeseries["downstream_torr"] = downstream_torr
+    timeseries["downstream_err_torr"] = pressure_reading_error_torr(downstream_torr)
+    timeseries["fit_used"] = fit.used
+
+    setpoint = run.metadata.get("run_info", {}).get("downstream_setpoint_torr")
+    return LeakTestResult(
+        run_id=run.run_id,
+        sample=sample,
+        rig=rig,
+        timeseries=timeseries,
+        fit=fit,
+        measurement_start_s=start_s,
+        measurement_start_source=start_source,
+        downstream_setpoint_torr=None if setpoint is None else float(setpoint),
+        furnace_setpoint=run.furnace_setpoint,
+    )
+
+
 def process_run(
     run: PermeationRun,
     sample: SampleInfo | None = None,
     rig: RigConfig | None = None,
+    leak: LeakTestResult | float | None = None,
 ) -> ProcessedRun:
     """Process a loaded run into a :class:`ProcessedRun`.
 
@@ -230,6 +395,14 @@ def process_run(
             metadata (:meth:`SampleInfo.from_metadata`).
         rig: Rig configuration; defaults to the one in service on the run
             date (:func:`~shield_toolbox.config.get_rig_config_for_date`).
+        leak: Background leak correction — a :class:`LeakTestResult` from
+            :func:`process_leak_test` (normally the sample's most recent
+            prior leak test, see
+            :func:`~shield_toolbox.io.fetch.find_leak_test_id`) or a bare
+            rate in Torr/s. The leak accumulated since permeation start is
+            subtracted from the downstream trace before fitting, so slope,
+            permeability, time lag, and the Φ(t) trace are all corrected
+            consistently. Default None: no correction (existing behaviour).
 
     Raises:
         ValueError: If the run has no upstream or no downstream Baratron,
@@ -259,8 +432,34 @@ def process_run(
     temperature_K, temperature_source = _sample_temperature(run, rig, in_run)
 
     time_in = run.time_s[in_run]
+
+    # Permeation start (time-lag zero) — resolved before the fits because it
+    # also anchors the leak correction.
+    if "v3_open_time" in run.valve_times_s:
+        permeation_start_s = run.valve_times_s["v3_open_time"]
+        permeation_start_source = "v3_open_time"
+    else:
+        permeation_start_s = float(time_in[0])
+        permeation_start_source = "window_start"
+
+    # Background-leak correction: subtract the leak accumulated since
+    # permeation start, leaving a permeation-only trace. The baseline at the
+    # start is untouched, so slope, intercept, and time lag stay consistent.
+    if leak is None:
+        leak_rate = None
+        leak_test_run_id = None
+        analysed_torr = downstream_torr
+    else:
+        if isinstance(leak, LeakTestResult):
+            leak_rate = leak.fit.rate_torr_per_s
+            leak_test_run_id = leak.run_id
+        else:
+            leak_rate = float(leak)
+            leak_test_run_id = None
+        analysed_torr = downstream_torr - leak_rate * (run.time_s - permeation_start_s)
+
     plateau = stable_upstream_pressure(time_in, upstream_torr[in_run])
-    fit_in = fit_downstream_rise(time_in, downstream_torr[in_run])
+    fit_in = fit_downstream_rise(time_in, analysed_torr[in_run])
 
     # Expand the fit mask (defined on the in-run window) to the full trace.
     fit_used = np.zeros(len(run.time_s), dtype=bool)
@@ -282,14 +481,8 @@ def process_run(
 
     # Time-lag method: τ from the steady-state fit's baseline crossing,
     # counted from the loading-valve opening; then D = e²/6τ and S = Φ/D.
-    if "v3_open_time" in run.valve_times_s:
-        permeation_start_s = run.valve_times_s["v3_open_time"]
-        permeation_start_source = "v3_open_time"
-    else:
-        permeation_start_s = float(time_in[0])
-        permeation_start_source = "window_start"
     baseline_torr = downstream_baseline_torr(
-        run.time_s, downstream_torr, permeation_start_s
+        run.time_s, analysed_torr, permeation_start_s
     )
     if fit.slope_torr_per_s > 0:
         time_lag_s = time_lag_from_fit(fit, baseline_torr, permeation_start_s)
@@ -309,7 +502,7 @@ def process_run(
     permeability_t = np.full(len(run.time_s), np.nan)
     permeability_t[in_run] = apparent_permeability_vs_time(
         time_in,
-        downstream_torr[in_run],
+        analysed_torr[in_run],
         upstream_pressure_torr=plateau.average_torr,
         temperature_K=temperature_K,
         sample_thickness_m=sample.thickness_m,
@@ -325,6 +518,8 @@ def process_run(
         fit_used,
         permeability_t,
     )
+    if leak_rate is not None:
+        timeseries["downstream_leak_corrected_torr"] = analysed_torr
 
     return ProcessedRun(
         run_id=run.run_id,
@@ -344,7 +539,18 @@ def process_run(
         downstream_baseline_torr=baseline_torr,
         furnace_setpoint=run.furnace_setpoint,
         valve_times_s=run.valve_times_s,
+        leak_rate_torr_per_s=leak_rate,
+        leak_test_run_id=leak_test_run_id,
     )
+
+
+def _sample_output_dir(base_dir: str | Path, sample: SampleInfo, run_id: str) -> Path:
+    """``<base>/<substrate>/<coating>/<run_id>``, names made path-safe."""
+
+    def safe(name: str) -> str:
+        return name.strip().replace("/", "-").replace(" ", "_")
+
+    return Path(base_dir) / safe(sample.substrate) / safe(sample.coating) / safe(run_id)
 
 
 def _run_date(run: PermeationRun) -> date:

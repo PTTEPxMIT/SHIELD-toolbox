@@ -16,6 +16,7 @@ from shield_toolbox.io import (
     PermeationRun,
     convert_run,
     fetch_run,
+    find_leak_test_id,
     load_furnace_log,
     load_run,
 )
@@ -27,12 +28,15 @@ from shield_toolbox.campaign import (  # noqa: E402  (needs processing)
     load_results,
 )
 from shield_toolbox.processing import (  # noqa: E402  (needs __version__)
+    LeakTestResult,
     ProcessedRun,
     SampleInfo,
+    process_leak_test,
     process_run,
 )
 
 __all__ = [
+    "LeakTestResult",
     "PermeationRun",
     "ProcessedRun",
     "RigConfig",
@@ -41,11 +45,13 @@ __all__ = [
     "arrhenius",
     "convert_run",
     "fetch_run",
+    "find_leak_test_id",
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",
     "load_furnace_log",
     "load_results",
     "load_run",
+    "process_leak_test",
     "process_run",
 ]
