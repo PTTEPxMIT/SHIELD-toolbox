@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from shield_toolbox.campaign import arrhenius, load_results
@@ -22,6 +23,7 @@ def _write_result(
     substrate: str = "316L steel",
     coating: str = "none",
     diffusivity: float | None = 1e-10,
+    leak: dict | None = None,
 ) -> None:
     solubility = None if diffusivity is None else permeability / diffusivity
     result = {
@@ -58,6 +60,8 @@ def _write_result(
             },
         },
     }
+    if leak is not None:
+        result["results"]["leak"] = leak
     run_dir = base / substrate.replace(" ", "_") / coating / run_id
     run_dir.mkdir(parents=True)
     with open(run_dir / "result.json", "w") as f:
@@ -86,6 +90,40 @@ def test_load_results_table(campaign_dir):
     other = results[results["run_id"] == "run_other"].iloc[0]
     assert np.isnan(other["diffusivity_m2_per_s"])
     assert np.isnan(other["solubility"])
+
+
+def test_load_results_skips_leak_tests_and_carries_leak_columns(campaign_dir):
+    # A stored leak-test result must not appear as a permeation row.
+    leak_dir = campaign_dir / "316L_steel" / "none" / "leak_run"
+    leak_dir.mkdir(parents=True)
+    with open(leak_dir / "result.json", "w") as f:
+        json.dump(
+            {
+                "run_id": "leak_run",
+                "run_type": "leak_test",
+                "sample": {"substrate": "316L steel", "coating": "none"},
+                "results": {"leak_rate_torr_per_s": 3e-6},
+            },
+            f,
+        )
+    # A leak-corrected permeation run carries the correction columns.
+    _write_result(
+        campaign_dir,
+        "run_corrected",
+        750.0,
+        1e12,
+        leak={"applied": True, "rate_torr_per_s": 3e-6, "leak_test_run_id": "leak_run"},
+    )
+
+    results = load_results(campaign_dir)
+    assert "leak_run" not in set(results["run_id"])
+    corrected = results[results["run_id"] == "run_corrected"].iloc[0]
+    assert corrected["leak_rate_torr_per_s"] == pytest.approx(3e-6)
+    assert corrected["leak_test_run_id"] == "leak_run"
+    # Uncorrected rows have no leak values.
+    uncorrected = results[results["run_id"] == "run_0"].iloc[0]
+    assert pd.isna(uncorrected["leak_rate_torr_per_s"])
+    assert pd.isna(uncorrected["leak_test_run_id"])
 
 
 def test_load_results_filters(campaign_dir):

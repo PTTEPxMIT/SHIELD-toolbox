@@ -15,7 +15,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from shield_toolbox.io import PermeationRun, convert_run, fetch_run, load_run
+from shield_toolbox.io import (
+    PermeationRun,
+    convert_run,
+    fetch_run,
+    find_leak_test_id,
+    load_run,
+)
 
 
 @pytest.fixture
@@ -174,3 +180,83 @@ def test_fetch_run_without_shield_data_raises(monkeypatch):
     monkeypatch.setitem(sys.modules, "shield_data", None)
     with pytest.raises(ImportError, match="SHIELD-Data"):
         fetch_run("combined_run")
+
+
+# --- leak-test pairing -------------------------------------------------------
+
+
+def _catalogue_row(run_id, run_type, sample_id, start_time, substrate="316L"):
+    return {
+        "run_id": run_id,
+        "run_type": run_type,
+        "sample_id": sample_id,
+        "substrate": substrate,
+        "coating": "Al2O3",
+        "start_time": start_time,
+    }
+
+
+LEAK_CATALOGUE = pd.DataFrame(
+    [
+        _catalogue_row(
+            "26.08.01_run_1_09h00", "leak_test", "S-01", "2026-08-01T09:00:00"
+        ),
+        _catalogue_row(
+            "26.08.10_run_1_09h00", "leak_test", "S-01", "2026-08-10T09:00:00"
+        ),
+        _catalogue_row(
+            "26.08.30_run_1_09h00", "leak_test", "S-01", "2026-08-30T09:00:00"
+        ),
+        _catalogue_row(
+            "26.08.05_run_1_09h00", "leak_test", "S-02", "2026-08-05T09:00:00"
+        ),
+        _catalogue_row(
+            "26.08.11_run_1_10h00", "permeation_exp", "S-01", "2026-08-11T10:00:00"
+        ),
+    ]
+)
+
+
+def _run_stub(run_info: dict) -> PermeationRun:
+    from pathlib import Path
+
+    return PermeationRun(
+        path=Path("stub"),
+        run_id="stub",
+        metadata={"run_info": run_info},
+        timestamps=np.array(["2026-08-15T10:00:00"], dtype="datetime64[ns]"),
+        time_s=np.zeros(1),
+        gauge_voltages={},
+        gauge_locations={},
+    )
+
+
+def test_find_leak_test_picks_latest_prior_same_sample():
+    run = _run_stub({"sample_id": "S-01", "start_time": "2026-08-15T10:00:00"})
+    # Latest leak test before the run wins; the later one and other samples
+    # (and permeation rows) are ignored.
+    assert find_leak_test_id(LEAK_CATALOGUE, run) == "26.08.10_run_1_09h00"
+
+
+def test_find_leak_test_none_when_no_prior_match():
+    run = _run_stub({"sample_id": "S-03", "start_time": "2026-08-15T10:00:00"})
+    assert find_leak_test_id(LEAK_CATALOGUE, run) is None
+    early = _run_stub({"sample_id": "S-01", "start_time": "2026-07-01T10:00:00"})
+    assert find_leak_test_id(LEAK_CATALOGUE, early) is None
+
+
+def test_find_leak_test_falls_back_to_substrate_coating_with_warning():
+    run = _run_stub(
+        {
+            "sample_substrate": "316L",
+            "sample_coating": "Al2O3",
+            "start_time": "2026-08-15T10:00:00",
+        }
+    )
+    with pytest.warns(UserWarning, match="no sample_id"):
+        assert find_leak_test_id(LEAK_CATALOGUE, run) == "26.08.10_run_1_09h00"
+
+
+def test_find_leak_test_none_without_run_type_column():
+    run = _run_stub({"sample_id": "S-01", "start_time": "2026-08-15T10:00:00"})
+    assert find_leak_test_id(pd.DataFrame({"run_id": []}), run) is None

@@ -7,7 +7,7 @@ old-generation run directories, once.
 """
 
 from shield_toolbox.io.convert import convert_run
-from shield_toolbox.io.fetch import fetch_run
+from shield_toolbox.io.fetch import fetch_run, find_leak_test_id
 from shield_toolbox.io.furnace import load_furnace_log
 from shield_toolbox.io.loader import load_run, run_from_frame
 from shield_toolbox.io.run import PermeationRun
@@ -16,6 +16,7 @@ __all__ = [
     "PermeationRun",
     "convert_run",
     "fetch_run",
+    "find_leak_test_id",
     "load_furnace_log",
     "load_run",
     "run_from_frame",
