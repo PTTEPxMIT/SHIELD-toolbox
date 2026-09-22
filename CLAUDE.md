@@ -34,7 +34,8 @@ One of three sibling repos, cloned side-by-side, deliberately separate
 - src/ layout, package `shield_toolbox` (installed as `shield-toolbox`).
 - `config.py` — versioned rig configurations as frozen dataclasses
   (`SHIELD_V1`, `SHIELD_V2`, `get_rig_config`, `get_rig_config_for_date`).
-  The rig is being upgraded: downstream volume and sample area WILL change.
+  The rig was rebuilt in September 2026 (`SHIELD_V2`, valid from 2026-09-16:
+  new downstream volume and 14 mm sample fitting); runs before that use `SHIELD_V1`.
   NEVER hard-code rig constants anywhere else — always go through the config.
 - `constants.py` — universal physical constants only (R, k_B, N_A, unit
   conversions), nothing rig-specific.

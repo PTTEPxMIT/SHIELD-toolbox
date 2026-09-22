@@ -114,18 +114,19 @@ SHIELD_V1 = RigConfig(
 
 SHIELD_V2 = RigConfig(
     version="v2",
-    valid_from=None,  # DRAFT — set to the commissioning date at upgrade time
-    downstream_volume_m3=ufloat(7.9e-5, 9.8e-6),  # PLACEHOLDER: measure
-    sample_diameter_m=0.0155,  # PLACEHOLDER: measure
+    valid_from=date(2026, 9, 16),  # first permeation run on the rebuilt rig
+    downstream_volume_m3=ufloat(1.77e-5, 2.2e-6),
+    sample_diameter_m=0.014,
     ambient_temperature_K=300.0,
-    v1_v2_split_ratio=ufloat(0.35, 0.1),  # PLACEHOLDER: re-estimate
+    v1_v2_split_ratio=ufloat(0.35, 0.1),  # carried over from v1 — not re-estimated
     furnace_setpoint_offset_K=0.0,
     gauges=SHIELD_V1.gauges,
     thermocouple=TypeKThermocouple(),
     notes=(
-        "DRAFT for the upcoming rig upgrade. Downstream volume, sample "
-        "diameter, and volume split are placeholders copied from v1 — "
-        "measure and update them, then set valid_from."
+        "Rebuilt SHIELD rig (September 2026): downstream volume "
+        "(1.77 ± 0.22)e-5 m³ and a 14 mm sample fitting, both measured on the "
+        "rebuild. Gauges unchanged. The V1/V2 hot-side volume split is still "
+        "the v1 estimate."
     ),
 )
 
