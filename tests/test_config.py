@@ -49,6 +49,7 @@ def test_v2_rebuilt_rig_values():
     assert SHIELD_V2.downstream_volume_m3.std_dev == pytest.approx(6.45e-6)
     assert SHIELD_V2.sample_diameter_m == pytest.approx(0.014)
     assert SHIELD_V2.sample_area_m2 == pytest.approx(0.25 * math.pi * 0.014**2)
+    assert SHIELD_V2.v1_v2_split_ratio.nominal_value == pytest.approx(0.5)
 
 
 def test_get_rig_config_for_date_switches_to_v2_on_rebuild():

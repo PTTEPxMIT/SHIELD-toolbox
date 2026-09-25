@@ -22,9 +22,14 @@ ZERO_CELSIUS_K = 273.15
 PA_TO_TORR = 1.0 / TORR_TO_PA
 """Torr per Pascal."""
 
-# Takaishi–Sensui thermal-transpiration coefficients, SI units (pressure in Pa,
-# tube diameter in m). Expressions kept verbatim from the original analysis
-# (note 10e-5 = 1e-4 and 10e-2 = 1e-1, i.e. NOT 1e-5 / 1e-2).
-TS_A = 1.24 * 56.3 / 10e-5
-TS_B = 8 * 7.7 / 10e-2
-TS_C = 10.6 * 2.73
+# Takaishi–Sensui thermal-transpiration constants for H2 (Takaishi & Sensui
+# 1963, Trans. Faraday Soc. 59, 2503, Table 1). They go with the reduced variable
+# X = 2·p·d/(T1 + T2), with p in Torr (mmHg), d in mm and T in K.
+TS_A_H2 = 1.24e5
+"""K²·Torr⁻²·mm⁻²."""
+
+TS_B_H2 = 8.00e2
+"""K·Torr⁻¹·mm⁻¹."""
+
+TS_C_H2 = 10.6
+"""K^½·Torr^-½·mm^-½."""
