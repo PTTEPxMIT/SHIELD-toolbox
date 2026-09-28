@@ -33,6 +33,7 @@ from shield_toolbox.analysis import (
     apparent_permeability_vs_time,
     diffusivity_from_time_lag,
     downstream_baseline_torr,
+    downstream_window_mask,
     fit_downstream_rise,
     fit_leak_rate,
     leak_molar_rate_mol_per_s,
@@ -45,6 +46,8 @@ from shield_toolbox.analysis import (
 from shield_toolbox.config import RigConfig, get_rig_config_for_date
 from shield_toolbox.constants import ZERO_CELSIUS_K
 from shield_toolbox.gauges import (
+    TYPE_K_MAX_MV,
+    TYPE_K_MIN_MV,
     Baratron626D,
     TypeKThermocouple,
     pressure_reading_error_torr,
@@ -110,7 +113,8 @@ class ProcessedRun:
     """Columns: ``timestamp``, ``time_s``, one ``<gauge>_voltage_V`` per
     gauge, ``upstream_torr``/``upstream_err_torr``,
     ``downstream_torr``/``downstream_err_torr``, ``temperature_K`` (NaN if
-    unknown), ``in_run``, ``fit_used``."""
+    unknown or the thermocouple reading is outside the Type K range),
+    ``in_run``, ``fit_used``."""
     upstream_plateau: UpstreamPlateau
     downstream_fit: DownstreamFit
     sample_temperature_K: float
@@ -157,8 +161,9 @@ class ProcessedRun:
             },
             "window": {
                 "rule": (
-                    "upstream Baratron saturates at ~10.12 V raw; in-run = "
-                    "after the last reading >= 10 V, through the final time"
+                    "Baratrons saturate at ~10.12 V raw; in-run = after the last "
+                    "upstream reading >= 10 V, up to the first downstream "
+                    "reading >= 10 V"
                 ),
                 "in_run_start_s": float(time_s[window][0]) if window.any() else None,
                 "n_in_run": int(window.sum()),
@@ -402,11 +407,16 @@ def process_run(
     upstream_name, upstream_torr = _baratron_pressure(run, "upstream")
     downstream_name, downstream_torr = _baratron_pressure(run, "downstream")
 
-    in_run = run_window_mask(run.voltage(upstream_name))
+    # In-run: after the upstream fill comes off its saturation cap, and before
+    # the downstream gauge first saturates (after which the downstream reading,
+    # and on the rebuilt rig the thermocouple, are no longer valid).
+    in_run = run_window_mask(run.voltage(upstream_name)) & downstream_window_mask(
+        run.voltage(downstream_name)
+    )
     if not in_run.any():
         raise ValueError(
-            f"Run {run.run_id}: upstream gauge saturated to the final sample — "
-            "no analysable window"
+            f"Run {run.run_id}: no analysable window (upstream saturated to the "
+            "final sample, or downstream saturated before the upstream came off its cap)"
         )
 
     temperature_K, temperature_source = _sample_temperature(run, rig, in_run)
@@ -578,11 +588,14 @@ def _build_timeseries(
     frame["downstream_err_torr"] = pressure_reading_error_torr(downstream_torr)
 
     if run.thermocouple_mv:
-        # No cold-junction compensation (matches legacy).
-        mv = next(iter(run.thermocouple_mv.values()))
-        frame["temperature_K"] = np.asarray(
-            TypeKThermocouple().to_kelvin(mv), dtype=float
-        )
+        # No cold-junction compensation (matches legacy). Readings outside the
+        # Type K range (e.g. once the downstream gauge saturates on the rebuilt
+        # rig) are left as NaN instead of raising.
+        mv = np.asarray(next(iter(run.thermocouple_mv.values())), dtype=float)
+        valid = np.isfinite(mv) & (mv >= TYPE_K_MIN_MV) & (mv <= TYPE_K_MAX_MV)
+        temperature = np.full(len(mv), np.nan)
+        temperature[valid] = TypeKThermocouple().to_kelvin(mv[valid])
+        frame["temperature_K"] = temperature
     else:
         frame["temperature_K"] = np.nan
 

@@ -115,6 +115,79 @@ def test_saturated_window_is_excluded(fixtures_dir, tmp_path):
     assert np.isfinite(ts["temperature_K"]).all()
 
 
+def _saturating_run() -> PermeationRun:
+    """Synthetic permeation run whose downstream gauge saturates at 1 Torr.
+
+    From the first saturated downstream sample on, the thermocouple reading is
+    broken (-101 mV, far outside the Type K range), as on the rebuilt rig.
+    """
+    time_s = np.arange(0.0, 3001.0, 1.0)
+    upstream_torr = np.where(time_s < 10, 0.0, 500.0)
+    downstream_torr = np.minimum(0.02 + 5e-4 * time_s, 1.012)
+    saturated = downstream_torr >= 1.0
+    thermocouple_mv = np.where(saturated, -101.19, 12.2)
+    metadata = {
+        "version": "1.4",
+        "run_info": {
+            "date": "2026-09-25",
+            "start_time": "2026-09-25T18:00:00",
+            "run_type": "permeation_exp",
+            "furnace_setpoint": 400,
+            "sample_substrate": "316L steel",
+            "sample_coating": "none",
+            "sample_thickness": 0.00098,
+            "sample_coating_layers": [],
+        },
+        "gauges": [
+            {
+                "name": "Baratron626D_1KT",
+                "type": "Baratron626D_Gauge",
+                "gauge_location": "upstream",
+                "full_scale_torr": 1000.0,
+            },
+            {
+                "name": "Baratron626D_1T",
+                "type": "Baratron626D_Gauge",
+                "gauge_location": "downstream",
+                "full_scale_torr": 1.0,
+            },
+        ],
+        "thermocouples": [{"name": "furnace_thermocouple"}],
+    }
+    return PermeationRun(
+        path=Path("saturating_run"),
+        run_id="saturating_run",
+        metadata=metadata,
+        timestamps=np.datetime64("2026-09-25T18:00:00")
+        + time_s.astype("timedelta64[s]"),
+        time_s=time_s,
+        gauge_voltages={
+            "Baratron626D_1KT": upstream_torr / 100.0,
+            "Baratron626D_1T": downstream_torr * 10.0,
+        },
+        gauge_locations={
+            "Baratron626D_1KT": "upstream",
+            "Baratron626D_1T": "downstream",
+        },
+        thermocouple_mv={"furnace_thermocouple": thermocouple_mv},
+        valve_times_s={"v3_open_time": 10.0},
+    )
+
+
+def test_window_ends_before_downstream_saturation():
+    run = _saturating_run()
+    processed = process_run(run)  # must not trip over the broken thermocouple
+    ts = processed.timeseries
+    first_saturated = int(np.argmax(run.gauge_voltages["Baratron626D_1T"] >= 10.0))
+    assert ts["in_run"].iloc[:first_saturated].all()
+    assert not ts["in_run"].iloc[first_saturated:].any()
+    # Temperature only converted in-run; NaN once the reading breaks.
+    assert ts["temperature_K"].iloc[first_saturated:].isna().all()
+    assert np.isfinite(ts["temperature_K"].iloc[:first_saturated]).all()
+    assert processed.temperature_source == "thermocouple"
+    assert 500.0 < processed.sample_temperature_K < 600.0
+
+
 # --- sample description from metadata ---------------------------------------
 
 

@@ -27,7 +27,7 @@ from shield_toolbox.analysis.time_varying import (
     apparent_permeability_vs_time,
     smoothed_pressure_rise_pa_per_s,
 )
-from shield_toolbox.analysis.window import run_window_mask
+from shield_toolbox.analysis.window import downstream_window_mask, run_window_mask
 
 __all__ = [
     "ArrheniusFit",
@@ -47,6 +47,7 @@ __all__ = [
     "permeability_takaishi_sensui",
     "takaishi_sensui_ratio",
     "run_window_mask",
+    "downstream_window_mask",
     "smoothed_pressure_rise_pa_per_s",
     "solubility_from_permeability",
     "stable_upstream_pressure",
