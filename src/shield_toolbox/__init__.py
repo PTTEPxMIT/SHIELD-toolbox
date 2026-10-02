@@ -27,12 +27,15 @@ from shield_toolbox.campaign import (  # noqa: E402  (needs processing)
     load_results,
 )
 from shield_toolbox.processing import (  # noqa: E402  (needs __version__)
+    LeakTestResult,
     ProcessedRun,
     SampleInfo,
+    process_leak_test,
     process_run,
 )
 
 __all__ = [
+    "LeakTestResult",
     "PermeationRun",
     "ProcessedRun",
     "RigConfig",
@@ -47,5 +50,6 @@ __all__ = [
     "load_furnace_log",
     "load_results",
     "load_run",
+    "process_leak_test",
     "process_run",
 ]

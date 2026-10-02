@@ -39,8 +39,9 @@ def load_results(
         coating: Keep only runs with this coating (exact match).
 
     Returns:
-        One row per processed run, sorted by temperature: ``run_id``,
-        ``substrate``, ``coating``, ``thickness_m``, ``temperature_K``,
+        One row per processed permeation run (stored leak-test results are
+        skipped), sorted by temperature: ``run_id``, ``substrate``,
+        ``coating``, ``sample_id``, ``thickness_m``, ``temperature_K``,
         ``temperature_source``, ``upstream_torr``, ``permeability`` /
         ``permeability_err``, ``time_lag_s``, ``diffusivity_m2_per_s``,
         ``solubility`` / ``solubility_err`` (NaN where a run has no valid
@@ -54,6 +55,8 @@ def load_results(
     for result_path in sorted(Path(base_dir).rglob(RESULT_FILENAME)):
         with open(result_path) as f:
             result = json.load(f)
+        if result.get("run_type") == "leak_test":
+            continue
         sample = result.get("sample", {})
         if substrate is not None and sample.get("substrate") != substrate:
             continue
@@ -65,6 +68,7 @@ def load_results(
                 "run_id": result.get("run_id"),
                 "substrate": sample.get("substrate"),
                 "coating": sample.get("coating"),
+                "sample_id": sample.get("sample_id"),
                 "thickness_m": sample.get("thickness_m"),
                 "temperature_K": result.get("temperature", {}).get(
                     "sample_temperature_K"

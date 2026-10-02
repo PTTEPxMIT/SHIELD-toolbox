@@ -2,6 +2,11 @@
 
 from shield_toolbox.analysis.evacuation import EvacuationFit, fit_evacuation
 from shield_toolbox.analysis.furnace import furnace_temperature_offset
+from shield_toolbox.analysis.leak import (
+    LeakRateFit,
+    fit_leak_rate,
+    leak_molar_rate_mol_per_s,
+)
 from shield_toolbox.analysis.steady_state import (
     ArrheniusFit,
     DownstreamFit,
@@ -27,6 +32,7 @@ __all__ = [
     "ArrheniusFit",
     "DownstreamFit",
     "EvacuationFit",
+    "LeakRateFit",
     "UpstreamPlateau",
     "apparent_permeability_vs_time",
     "diffusivity_from_time_lag",
@@ -34,7 +40,9 @@ __all__ = [
     "fit_arrhenius",
     "fit_downstream_rise",
     "fit_evacuation",
+    "fit_leak_rate",
     "furnace_temperature_offset",
+    "leak_molar_rate_mol_per_s",
     "permeability_takaishi_sensui",
     "run_window_mask",
     "smoothed_pressure_rise_pa_per_s",

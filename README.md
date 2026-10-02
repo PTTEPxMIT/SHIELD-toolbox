@@ -170,6 +170,25 @@ Command-line equivalent for one or many runs:
 uv run python scripts/process_run.py ../SHIELD-Data/run_data/25.10.06_run_1_10h41 --show
 ```
 
+## Leak tests
+
+A **leak test** (`run_type="leak_test"` in the DAS) is a short run recorded
+with the sample installed and sealed, the upstream side unpressurized, and
+the downstream volume isolated at a setpoint inside the 1 Torr Baratron's
+range. Its downstream dP/dt is the background of the sealed assembly — seal
+leakage plus outgassing. It is a standalone diagnostic: it is not applied to
+any permeation run.
+
+```python
+from shield_toolbox import fetch_run, process_leak_test
+
+leak = process_leak_test(fetch_run("26.09.21_run_1_15h25"))
+print(leak.rate_torr_per_s)  # e.g. 4.2e-07 (Torr/s)
+```
+
+`LeakTestResult.write()` stores leak tests in the same
+`<substrate>/<coating>/<run_id>/` tree; `load_results` skips them.
+
 ## Campaign analysis: Arrhenius fits across runs
 
 Once several runs of the same sample are processed, aggregate them and fit

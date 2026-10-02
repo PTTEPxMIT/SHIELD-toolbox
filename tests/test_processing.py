@@ -1,16 +1,19 @@
 """Tests for shield_toolbox.processing — process_run and the stored artifact."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from shield_toolbox import convert_run, get_rig_config, load_run
+from shield_toolbox.io import PermeationRun
 from shield_toolbox.processing import (
     RESULT_FILENAME,
     TIMESERIES_FILENAME,
     SampleInfo,
+    process_leak_test,
     process_run,
 )
 
@@ -176,3 +179,95 @@ def test_process_run_without_sample_or_metadata_raises(fixtures_dir, tmp_path):
     )
     with pytest.raises(ValueError, match="no sample description"):
         process_run(load_run(run_dir))
+
+
+def test_sample_info_reads_v15_sample_id():
+    sample = SampleInfo.from_metadata(
+        {"run_info": dict(V14_SAMPLE_FIELDS, sample_id="S-07")}
+    )
+    assert sample.sample_id == "S-07"
+
+
+# --- leak tests --------------------------------------------------------------
+
+LEAK_RATE_TRUE = 2e-6  # Torr/s
+
+
+def _leak_test_run(run_type: str = "leak_test") -> PermeationRun:
+    """A synthetic leak-test run: 0.1 Torr + a linear background rise."""
+    time_s = np.arange(0.0, 601.0, 1.0)
+    downstream_torr = 0.1 + LEAK_RATE_TRUE * time_s
+    metadata = {
+        "version": "1.5",
+        "run_info": {
+            "date": "2026-08-20",
+            "start_time": "2026-08-20T10:00:00",
+            "run_type": run_type,
+            "furnace_setpoint": 25,
+            "sample_substrate": "316L",
+            "sample_coating": "Al2O3",
+            "sample_thickness": 0.00088,
+            "sample_coating_layers": [],
+            "sample_id": "S-01",
+            "downstream_setpoint_torr": 0.1,
+        },
+        "gauges": [
+            {
+                "name": "Baratron626D_1T",
+                "type": "Baratron626D_Gauge",
+                "gauge_location": "downstream",
+                "full_scale_torr": 1.0,
+            }
+        ],
+        "thermocouples": [],
+    }
+    return PermeationRun(
+        path=Path("leak_run"),
+        run_id="leak_run",
+        metadata=metadata,
+        timestamps=np.datetime64("2026-08-20T10:00:00")
+        + time_s.astype("timedelta64[s]"),
+        time_s=time_s,
+        # 1 Torr full scale: V = torr * 10.
+        gauge_voltages={"Baratron626D_1T": downstream_torr * 10.0},
+        gauge_locations={"Baratron626D_1T": "downstream"},
+        valve_times_s={"downstream_isolated_time": 60.0},
+    )
+
+
+@pytest.fixture
+def leak_result():
+    return process_leak_test(_leak_test_run(), rig=get_rig_config("v1"))
+
+
+def test_process_leak_test_fits_background_rate(leak_result):
+    assert leak_result.rate_torr_per_s == pytest.approx(LEAK_RATE_TRUE)
+    assert leak_result.measurement_start_s == 60.0
+    assert leak_result.measurement_start_source == "downstream_isolated_time"
+    assert leak_result.downstream_setpoint_torr == 0.1
+    assert leak_result.sample.sample_id == "S-01"
+    # Samples before the isolation event are excluded from the fit.
+    assert not leak_result.timeseries["fit_used"].iloc[0]
+    assert leak_result.timeseries["fit_used"].iloc[-1]
+
+
+def test_process_leak_test_result_dict_and_write(leak_result, tmp_path):
+    result = leak_result.result_dict()
+    assert result["run_type"] == "leak_test"
+    assert result["sample"]["sample_id"] == "S-01"
+    assert result["run_info"]["downstream_setpoint_torr"] == 0.1
+    assert result["results"]["leak_rate_torr_per_s"] == pytest.approx(LEAK_RATE_TRUE)
+    assert result["results"]["leak_molar_rate"]["units"] == "mol/s"
+    assert result["results"]["r_squared"] == pytest.approx(1.0)
+
+    out_dir = leak_result.write(tmp_path)
+    assert out_dir == tmp_path / "316L" / "Al2O3" / "leak_run"
+    assert (out_dir / RESULT_FILENAME).is_file()
+    assert (out_dir / TIMESERIES_FILENAME).is_file()
+
+
+def test_process_leak_test_rejects_permeation_run():
+    with pytest.raises(ValueError, match="not a leak test"):
+        process_leak_test(
+            _leak_test_run(run_type="permeation_exp"), rig=get_rig_config("v1")
+        )

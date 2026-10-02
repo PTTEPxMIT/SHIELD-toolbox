@@ -88,6 +88,25 @@ def test_load_results_table(campaign_dir):
     assert np.isnan(other["solubility"])
 
 
+def test_load_results_skips_leak_tests(campaign_dir):
+    # A stored leak-test result must not appear as a permeation row.
+    leak_dir = campaign_dir / "316L_steel" / "none" / "leak_run"
+    leak_dir.mkdir(parents=True)
+    with open(leak_dir / "result.json", "w") as f:
+        json.dump(
+            {
+                "run_id": "leak_run",
+                "run_type": "leak_test",
+                "sample": {"substrate": "316L steel", "coating": "none"},
+                "results": {"leak_rate_torr_per_s": 3e-6},
+            },
+            f,
+        )
+
+    results = load_results(campaign_dir)
+    assert "leak_run" not in set(results["run_id"])
+
+
 def test_load_results_filters(campaign_dir):
     results = load_results(campaign_dir, substrate="316L steel", coating="none")
     assert len(results) == 4
