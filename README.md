@@ -240,7 +240,7 @@ reproduces it:
 
 Φ uses the corrected Takaishi–Sensui formula with the rig constants, not the
 notebook's original formula (which dropped the hot downstream volume), so Φ
-is 10–25 % above the old notebook's values; τ and D match them exactly. Old
+is 7–30 % above the old notebook's values; τ and D match them exactly. Old
 runs often carry no or a wrong sample thickness in their metadata, so pass
 it:
 
