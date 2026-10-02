@@ -128,11 +128,11 @@ def test_rig_resolved_from_run_date(processed):
 def test_recovers_background_and_time_lag(processed):
     assert processed.initial_time_s == pytest.approx(T_STEP_S)
     # Slow rise: the 10 min blocks find the onset, the noise recording stops
-    # 10 min before it.
+    # a quarter of the pre-rise time before it.
     noise = processed.noise
     assert noise.onset_from == "10 min blocks"
     assert noise.start_s == 60.0
-    assert noise.end_s == pytest.approx(noise.onset_s - 600.0)
+    assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
     assert 1800 < noise.onset_s < 3 * 3600
     assert processed.background.slope.nominal_value == pytest.approx(1e-4, rel=0.1)
     assert processed.background.level.nominal_value == pytest.approx(
@@ -169,7 +169,7 @@ def test_fast_rise_uses_one_minute_onset():
     noise = processed.noise
     assert noise.onset_from == "1 min blocks"
     assert noise.onset_s < 1200
-    assert noise.end_s == pytest.approx(noise.onset_s - max(60.0, 0.25 * noise.onset_s))
+    assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
     assert processed.time_lag_s == pytest.approx(900, rel=0.05)
 
 
@@ -194,6 +194,11 @@ def test_settings_and_refit(processed):
     short = processed.refit(analysis_hours=15)
     assert short.steady_state_window_s[1] <= 15 * 3600
     assert short.settings.analysis_hours == 15
+
+
+def test_noise_margin_fraction_setting(processed):
+    half = processed.refit(noise_margin_fraction=0.5)
+    assert half.noise.end_s == pytest.approx(0.5 * half.noise.onset_s)
 
 
 def test_manual_noise_end():

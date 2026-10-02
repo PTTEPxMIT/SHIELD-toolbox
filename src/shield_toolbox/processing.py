@@ -46,7 +46,7 @@ from shield_toolbox.analysis import (
     solubility_from_permeability,
 )
 from shield_toolbox.analysis.time_lag import (
-    NOISE_MARGIN_S,
+    NOISE_MARGIN_FRACTION,
     NOISE_START_S,
     ONSET_SIGMA,
     PRESSURISED_TORR,
@@ -135,8 +135,9 @@ class TimeLagSettings:
     ``steady_state_start_taus`` (no τ_L iteration)."""
     noise_start_s: float = NOISE_START_S
     """The noise recording starts this long after ``t_init``."""
-    noise_margin_s: float = NOISE_MARGIN_S
-    """The noise recording ends this long before the detected rise onset."""
+    noise_margin_fraction: float = NOISE_MARGIN_FRACTION
+    """The noise recording ends this fraction of the pre-rise time (t_init to
+    the detected onset) before the onset."""
     onset_sigma: float = ONSET_SIGMA
     """Rise-onset detection threshold, in standard errors."""
     noise_end_s: float | None = None
@@ -558,7 +559,7 @@ def _analyse(
         t_rel,
         downstream_pa,
         start_s=settings.noise_start_s,
-        margin_s=settings.noise_margin_s,
+        margin_fraction=settings.noise_margin_fraction,
         n_sigma=settings.onset_sigma,
         end_s=settings.noise_end_s,
     )

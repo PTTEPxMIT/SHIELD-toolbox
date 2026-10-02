@@ -85,7 +85,7 @@ def test_noise_recording_ends_margin_before_onset():
     p += rng.normal(0, 0.01, len(t_rel))
     noise = find_noise_recording(t_rel, p)
     assert noise.onset_from == "10 min blocks"
-    assert noise.end_s == pytest.approx(noise.onset_s - 600.0)
+    assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
     np.testing.assert_array_equal(noise.used, (t_rel >= 60.0) & (t_rel <= noise.end_s))
 
     background = fit_background(t_rel, p, noise.used)
@@ -100,7 +100,7 @@ def test_noise_recording_switches_to_one_minute_blocks_for_fast_rise():
     p = 5.0 + _fickian_rise(t_rel, 900, 1e-2) + rng.normal(0, 0.01, len(t_rel))
     noise = find_noise_recording(t_rel, p)
     assert noise.onset_from == "1 min blocks"
-    assert noise.end_s == pytest.approx(noise.onset_s - max(60.0, 0.25 * noise.onset_s))
+    assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
 
 
 def test_steady_state_fit_recovers_time_lag_from_fickian_transient():

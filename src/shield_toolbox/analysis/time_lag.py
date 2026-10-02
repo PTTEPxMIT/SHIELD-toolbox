@@ -7,8 +7,9 @@ downstream background has been removed. The procedure, in four steps:
    downstream volume sees only the background: seal leakage plus outgassing.
    That flat stretch after the upstream step is each run's noise recording.
    It starts ``NOISE_START_S`` after ``t_init`` (skipping the small jump the
-   valve opening puts on the downstream gauge) and ends ``NOISE_MARGIN_S``
-   before the detected onset of the downstream rise (:func:`rise_onset`).
+   valve opening puts on the downstream gauge) and ends a fraction
+   ``NOISE_MARGIN_FRACTION`` of the pre-rise time (``t_init`` to the detected
+   onset of the downstream rise, :func:`rise_onset`) before the onset.
 2. **Initial time.** ``t_init`` is the moment the upstream pressure steps up:
    the first sample above half its plateau (:func:`initial_time`).
 3. **Background fit.** A straight line ``P_bg = a + b·(t − t_init)`` is fitted
@@ -44,8 +45,9 @@ detection)."""
 NOISE_START_S = 60.0
 """The noise recording starts this long after ``t_init``, skipping the jump
 the valve opening puts on the downstream gauge."""
-NOISE_MARGIN_S = 600.0
-"""The noise recording ends this long before the detected rise onset."""
+NOISE_MARGIN_FRACTION = 0.25
+"""The noise recording ends this fraction of the pre-rise time (``t_init``
+to the detected onset) before the onset, i.e. at (1 − fraction)·onset."""
 ONSET_SIGMA = 5.0
 """A block counts as the rise onset when its mean sits more than this many
 standard errors above the background line fitted before it."""
@@ -155,27 +157,29 @@ def find_noise_recording(
     time_since_init_s: npt.ArrayLike,
     pressure: npt.ArrayLike,
     start_s: float = NOISE_START_S,
-    margin_s: float = NOISE_MARGIN_S,
+    margin_fraction: float = NOISE_MARGIN_FRACTION,
     n_sigma: float = ONSET_SIGMA,
     end_s: float | None = None,
 ) -> NoiseRecording:
-    """Find the noise recording: from ``start_s`` to ``margin_s`` before the
-    rise onset.
+    """Find the noise recording: from ``start_s`` to
+    ``(1 − margin_fraction)·onset``.
 
-    The onset comes from 10 min blocks (:func:`rise_onset`). At high
-    temperature the rise can start within minutes, before the 10 min blocks
-    can resolve it, so the search is repeated with 1 min blocks. If that
-    finds the rise inside the 10-min-based noise window, the 1 min onset is
-    used instead, and the noise recording then ends a quarter of the onset
-    time before it (at least 1 min). If no onset is detected at all, the
-    noise recording is the 30 min seed stretch the onset search starts from.
+    The early permeation flux builds gradually, so the recording stops a
+    fraction of the pre-rise time before the detected onset. The onset comes
+    from 10 min blocks (:func:`rise_onset`). At high temperature the rise can
+    start within minutes, before the 10 min blocks can resolve it, so the
+    search is repeated with 1 min blocks; if that finds the rise inside the
+    10-min-based noise window, the 1 min onset is used instead. If no onset
+    is detected at all, the noise recording is the 30 min seed stretch the
+    onset search starts from.
 
     Args:
         time_since_init_s: Time since ``t_init``, s.
         pressure: Downstream pressure (Pa in ``process_run``).
         start_s: Start of the noise recording, s after ``t_init``.
-        margin_s: Gap between the end of the noise recording and the
-            10-min-block onset, s.
+        margin_fraction: Fraction of the pre-rise time (``t_init`` to the
+            onset) left between the end of the noise recording and the
+            onset.
         n_sigma: Onset detection threshold (standard errors).
         end_s: Manual end of the noise recording, s after ``t_init``;
             overrides the detected one (the onset is still reported).
@@ -188,18 +192,17 @@ def find_noise_recording(
         t_rel, p, start_s=start_s, block_s=FINE_ONSET_BLOCK_S, n_sigma=n_sigma
     )
     if fine_onset_s is not None and (
-        onset_s is None or fine_onset_s < onset_s - margin_s
+        onset_s is None or fine_onset_s < (1 - margin_fraction) * onset_s
     ):
         # rise already under way inside the 10-min-based window
         onset_s, noise_sd, onset_from = fine_onset_s, fine_sd, "1 min blocks"
-        margin_s = max(60.0, 0.25 * onset_s)
     if end_s is not None:
         onset_from = "manual"
     elif onset_s is None:
         onset_from = "none detected"
         end_s = start_s + 1800.0
     else:
-        end_s = onset_s - margin_s
+        end_s = (1 - margin_fraction) * onset_s
     return NoiseRecording(
         start_s=float(start_s),
         end_s=float(end_s),

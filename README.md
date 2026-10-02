@@ -137,13 +137,13 @@ their saturation caps), and then:
 
 1. **Noise recording.** Before hydrogen has crossed the sample, the sealed
    downstream volume sees only the background (seal leakage plus outgassing).
-   The noise recording runs from 1 min after `t_init` to 10 min before the
-   detected onset of the downstream rise. The onset is the first 10 min
-   block more than 5σ above the background line fitted before it; a 1 min
-   block search takes over when the rise starts within minutes (high
-   temperature), and the recording then ends a quarter of the onset time
-   before it. The search covers the whole run; if no onset is detected, the
-   noise recording is the first 30 min after it starts.
+   The noise recording runs from 1 min after `t_init` to a quarter of the
+   pre-rise time before the detected onset of the downstream rise (i.e. to
+   0.75 × onset; the early flux builds gradually). The onset is the first
+   10 min block more than 5σ above the background line fitted before it; a
+   1 min block search takes over when the rise starts within minutes (high
+   temperature). The search covers the whole run; if no onset is detected,
+   the noise recording is the first 30 min after it starts.
 2. **Initial time.** `t_init` is the first sample where the upstream passes
    half its plateau.
 3. **Background fit.** A straight line `a + b·(t − t_init)` through the noise
@@ -194,7 +194,8 @@ Every setting of the method is a keyword of `process_run` (the fields of
 | `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
 | `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |
 | `steady_state_end_s` | last usable | steady-state window end, s after `t_init` |
-| `noise_start_s` / `noise_margin_s` | 60 / 600 | noise recording start, and gap before the onset |
+| `noise_start_s` | 60 | noise recording start, s after `t_init` |
+| `noise_margin_fraction` | 0.25 | noise recording ends this fraction of the pre-rise time before the onset |
 | `onset_sigma` | 5 | onset detection threshold (standard errors) |
 | `noise_end_s` | detected | manual end of the noise recording |
 | `background_slope_pa_per_s` | fitted | override `b` (sensitivity checks) |
