@@ -54,8 +54,6 @@ ONSET_BLOCK_S = 600.0
 FINE_ONSET_BLOCK_S = 60.0
 """Block length of the second onset search, for rises that start within
 minutes (high temperature)."""
-ONSET_SEARCH_S = 6 * 3600.0
-"""The onset search gives up this long after ``t_init``."""
 SS_START_TAUS = 3.0
 """The steady-state window starts at this many time lags after ``t_init``."""
 
@@ -90,8 +88,8 @@ def rise_onset(
     start_s: float = NOISE_START_S,
     block_s: float = ONSET_BLOCK_S,
     n_sigma: float = ONSET_SIGMA,
-    max_s: float = ONSET_SEARCH_S,
-) -> tuple[float, float]:
+    max_s: float | None = None,
+) -> tuple[float | None, float]:
     """Onset of the downstream rise, and the noise level before it.
 
     Starting at ``start_s``, the downstream is averaged in ``block_s`` blocks.
@@ -106,15 +104,13 @@ def rise_onset(
         start_s: Start of the search, s after ``t_init``.
         block_s: Block length, s.
         n_sigma: Detection threshold in standard errors of the block mean.
-        max_s: End of the search, s after ``t_init``.
+        max_s: End of the search, s after ``t_init``; default the end of
+            the data.
 
     Returns:
-        ``(onset_s, noise_sd)``: the onset in s after ``t_init``, and the
-        standard deviation of the seed stretch about its linear fit (same
-        unit as ``pressure``).
-
-    Raises:
-        ValueError: If no block departs from the background before ``max_s``.
+        ``(onset_s, noise_sd)``: the onset in s after ``t_init`` (None if no
+        block departs from the background), and the standard deviation of
+        the seed stretch about its linear fit (same unit as ``pressure``).
     """
     t_rel = np.asarray(time_since_init_s, dtype=float)
     p = np.asarray(pressure, dtype=float)
@@ -122,6 +118,7 @@ def rise_onset(
     noise_sd = np.std(
         p[first] - np.polyval(np.polyfit(t_rel[first], p[first], 1), t_rel[first])
     )
+    max_s = t_rel[-1] if max_s is None else max_s
     for lo in np.arange(start_s, max_s, block_s)[3:]:
         before = (t_rel >= start_s) & (t_rel < lo)
         block = (t_rel >= lo) & (t_rel < lo + block_s)
@@ -131,9 +128,7 @@ def rise_onset(
         resid = p[block].mean() - (a + b * t_rel[block].mean())
         if resid > n_sigma * noise_sd / np.sqrt(block.sum()):
             return float(lo), float(noise_sd)
-    raise ValueError(
-        f"No downstream rise onset found within {max_s / 3600:g} h of t_init"
-    )
+    return None, float(noise_sd)
 
 
 @dataclass(frozen=True)
@@ -144,10 +139,12 @@ class NoiseRecording:
     """Start, s after ``t_init``."""
     end_s: float
     """End, s after ``t_init``."""
-    onset_s: float
-    """Detected onset of the downstream rise, s after ``t_init``."""
+    onset_s: float | None
+    """Detected onset of the downstream rise, s after ``t_init`` (None if
+    none was detected)."""
     onset_from: str
-    """``"10 min blocks"``, ``"1 min blocks"`` or ``"manual"``."""
+    """``"10 min blocks"``, ``"1 min blocks"``, ``"none detected"`` or
+    ``"manual"``."""
     noise_sd: float
     """Noise level before the onset (unit of the pressure searched)."""
     used: np.ndarray
@@ -170,7 +167,8 @@ def find_noise_recording(
     can resolve it, so the search is repeated with 1 min blocks. If that
     finds the rise inside the 10-min-based noise window, the 1 min onset is
     used instead, and the noise recording then ends a quarter of the onset
-    time before it (at least 1 min).
+    time before it (at least 1 min). If no onset is detected at all, the
+    noise recording is the 30 min seed stretch the onset search starts from.
 
     Args:
         time_since_init_s: Time since ``t_init``, s.
@@ -189,18 +187,23 @@ def find_noise_recording(
     fine_onset_s, fine_sd = rise_onset(
         t_rel, p, start_s=start_s, block_s=FINE_ONSET_BLOCK_S, n_sigma=n_sigma
     )
-    if fine_onset_s < onset_s - margin_s:
+    if fine_onset_s is not None and (
+        onset_s is None or fine_onset_s < onset_s - margin_s
+    ):
         # rise already under way inside the 10-min-based window
         onset_s, noise_sd, onset_from = fine_onset_s, fine_sd, "1 min blocks"
         margin_s = max(60.0, 0.25 * onset_s)
-    if end_s is None:
-        end_s = onset_s - margin_s
-    else:
+    if end_s is not None:
         onset_from = "manual"
+    elif onset_s is None:
+        onset_from = "none detected"
+        end_s = start_s + 1800.0
+    else:
+        end_s = onset_s - margin_s
     return NoiseRecording(
         start_s=float(start_s),
         end_s=float(end_s),
-        onset_s=float(onset_s),
+        onset_s=onset_s,
         onset_from=onset_from,
         noise_sd=float(noise_sd),
         used=(t_rel >= start_s) & (t_rel <= end_s),
@@ -255,6 +258,9 @@ class SteadyStateFit:
     """Boolean mask of the samples inside the steady-state window."""
     covariance: np.ndarray
     """2×2 covariance of (slope, intercept) from the fit."""
+    converged: bool = True
+    """False if the τ_L iteration stopped before τ_L settled (it ran out of
+    iterations, or the next window start lay past the data)."""
 
     def evaluate(self, time_since_init_s: npt.ArrayLike) -> np.ndarray:
         """The steady-state line at the given times since ``t_init``."""
@@ -269,12 +275,16 @@ def fit_steady_state(
     start_taus: float = SS_START_TAUS,
     end_s: float | None = None,
     n_iter: int = 20,
+    start_s: float | None = None,
 ) -> SteadyStateFit:
     """Fit the steady-state line from ``start_taus·τ_L`` to ``end_s``.
 
     τ_L and the window start depend on each other, so they are iterated from
     a first guess of a quarter of the span until τ_L moves by less than 1 s
     (at most ``n_iter`` times; τ_L is floored at 60 s between iterations).
+    If the next window start would leave fewer than four usable samples, the
+    iteration stops and keeps the last fit (``converged=False``). With
+    ``start_s`` the window start is fixed and there is no iteration.
 
     Args:
         time_since_init_s: Time since ``t_init``, s.
@@ -284,32 +294,47 @@ def fit_steady_state(
         end_s: Window end, s after ``t_init``; defaults to the last usable
             sample.
         n_iter: Maximum number of iterations.
-
-    Raises:
-        ValueError: If the window holds too few usable samples to fit — the
-            run did not reach ``start_taus·τ_L`` before ``end_s``.
+        start_s: Fixed window start, s after ``t_init``; overrides
+            ``start_taus``.
     """
     t_rel = np.asarray(time_since_init_s, dtype=float)
     p = np.asarray(filtered, dtype=float)
     ok = np.asarray(usable, dtype=bool)
     end_s = t_rel[ok][-1] if end_s is None else end_s
-    tau = 0.25 * end_s  # first guess
-    for _ in range(n_iter):
-        window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
-        if window.sum() < 4:
-            raise ValueError(
-                f"Steady-state window from {start_taus:g}·τ_L = "
-                f"{start_taus * tau / 3600:.2f} h to {end_s / 3600:.2f} h after "
-                "t_init holds too few usable samples — the run did not reach "
-                "steady state"
-            )
+
+    def fit(window):
         (slope, intercept), cov = np.polyfit(t_rel[window], p[window], 1, cov=True)
-        new_tau = -intercept / slope
+        return slope, -intercept / slope, cov
+
+    if start_s is not None:
+        window = ok & (t_rel >= start_s) & (t_rel <= end_s)
+        slope, tau, cov = fit(window)
+        return SteadyStateFit(
+            slope=float(slope), time_lag_s=float(tau), used=window, covariance=cov
+        )
+
+    tau = 0.25 * end_s  # first guess
+    window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
+    slope, new_tau, cov = fit(window)
+    converged = False
+    for _ in range(n_iter - 1):
         if abs(new_tau - tau) < 1.0:
+            converged = True
             break
         tau = max(new_tau, 60.0)
+        next_window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
+        if next_window.sum() < 4:
+            break  # next start lies past the data: keep the last fit
+        window = next_window
+        slope, new_tau, cov = fit(window)
+    else:
+        converged = abs(new_tau - tau) < 1.0
     return SteadyStateFit(
-        slope=float(slope), time_lag_s=float(new_tau), used=window, covariance=cov
+        slope=float(slope),
+        time_lag_s=float(new_tau),
+        used=window,
+        covariance=cov,
+        converged=converged,
     )
 
 

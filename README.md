@@ -142,7 +142,8 @@ their saturation caps), and then:
    block more than 5σ above the background line fitted before it; a 1 min
    block search takes over when the rise starts within minutes (high
    temperature), and the recording then ends a quarter of the onset time
-   before it.
+   before it. The search covers the whole run; if no onset is detected, the
+   noise recording is the first 30 min after it starts.
 2. **Initial time.** `t_init` is the first sample where the upstream passes
    half its plateau.
 3. **Background fit.** A straight line `a + b·(t − t_init)` through the noise
@@ -151,7 +152,12 @@ their saturation caps), and then:
    filtered signal starts at 0 at `t_init`. The steady-state line
    `S∞·(t − t_init − τ_L)` is fitted from 3 τ_L (iterated) to the end of
    usable data: the first 30 h after `t_init`, downstream below 0.95 Torr,
-   upstream pressurised.
+   upstream pressurised. If the next 3 τ_L start would lie past the data,
+   the iteration keeps its last fit (`steady_state.converged` is False).
+
+`process_run` always returns a fit and never decides a run is unusable;
+judging whether the rise is at steady state is up to you (the step plots
+and `converged` flag help).
 
 From the fit:
 
@@ -186,6 +192,7 @@ Every setting of the method is a keyword of `process_run` (the fields of
 | `upstream_pressure_torr` | measured | P_up in Φ; None = mean over the steady-state window |
 | `analysis_hours` | 30 | analyse the first N h after `t_init` (None = whole run) |
 | `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
+| `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |
 | `steady_state_end_s` | last usable | steady-state window end, s after `t_init` |
 | `noise_start_s` / `noise_margin_s` | 60 / 600 | noise recording start, and gap before the onset |
 | `onset_sigma` | 5 | onset detection threshold (standard errors) |

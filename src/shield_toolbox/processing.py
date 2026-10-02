@@ -130,6 +130,9 @@ class TimeLagSettings:
     steady_state_end_s: float | None = None
     """End of the steady-state window, s after ``t_init``. None: the last
     usable sample."""
+    steady_state_start_s: float | None = None
+    """Fixed start of the steady-state window, s after ``t_init``; overrides
+    ``steady_state_start_taus`` (no τ_L iteration)."""
     noise_start_s: float = NOISE_START_S
     """The noise recording starts this long after ``t_init``."""
     noise_margin_s: float = NOISE_MARGIN_S
@@ -270,6 +273,7 @@ class ProcessedRun:
                 },
                 "steady_state": {
                     "slope_pa_per_s": self.steady_state.slope,
+                    "converged": self.steady_state.converged,
                     "window_start_s": ss_start_s,
                     "window_end_s": ss_end_s,
                     "n_samples": int(self.steady_state.used.sum()),
@@ -583,6 +587,7 @@ def _analyse(
         usable,
         start_taus=settings.steady_state_start_taus,
         end_s=settings.steady_state_end_s,
+        start_s=settings.steady_state_start_s,
     )
 
     temperature_K, temperature_source = _window_temperature(

@@ -53,11 +53,29 @@ def test_rise_onset_finds_departure_from_background():
     assert noise_sd == pytest.approx(0.01, rel=0.2)
 
 
-def test_rise_onset_raises_without_rise():
+def test_rise_onset_none_without_rise():
     rng = np.random.default_rng(2)
     t_rel = np.arange(0.0, 7 * 3600, 10.0)
-    with pytest.raises(ValueError, match="No downstream rise onset"):
-        rise_onset(t_rel, rng.normal(0, 0.01, len(t_rel)))
+    onset_s, _ = rise_onset(t_rel, rng.normal(0, 0.01, len(t_rel)))
+    assert onset_s is None
+
+
+def test_rise_onset_searches_the_whole_run():
+    # Flat for 10 h, then a rise: found however late it starts.
+    t_rel = np.arange(0.0, 14 * 3600, 10.0)
+    p = np.where(t_rel < 36000, 0.0, 1e-3 * (t_rel - 36000))
+    p = p + np.random.default_rng(5).normal(0, 0.01, len(t_rel))
+    onset_s, _ = rise_onset(t_rel, p)
+    assert 36000 - 600 < onset_s <= 36000 + 600
+
+
+def test_noise_recording_falls_back_to_seed_stretch_without_onset():
+    rng = np.random.default_rng(6)
+    t_rel = np.arange(0.0, 3 * 3600, 10.0)
+    noise = find_noise_recording(t_rel, rng.normal(0, 0.01, len(t_rel)))
+    assert noise.onset_s is None
+    assert noise.onset_from == "none detected"
+    assert noise.end_s == 60.0 + 1800.0
 
 
 def test_noise_recording_ends_margin_before_onset():
@@ -90,6 +108,7 @@ def test_steady_state_fit_recovers_time_lag_from_fickian_transient():
     t_rel = np.arange(0.0, 12 * tau_true, 5.0)
     filtered = _fickian_rise(t_rel, tau_true, 2e-2)
     fit = fit_steady_state(t_rel, filtered, np.ones_like(t_rel, dtype=bool))
+    assert fit.converged
     # The window starts at 3 τ_L (iterated) and runs to the end.
     assert t_rel[fit.used][0] == pytest.approx(3 * fit.time_lag_s, abs=5.0)
     assert t_rel[fit.used][-1] == t_rel[-1]
@@ -111,11 +130,24 @@ def test_steady_state_fit_respects_window_end_and_usable_mask():
     assert t_rel[fit.used][0] == pytest.approx(2 * fit.time_lag_s, abs=5.0)
 
 
-def test_steady_state_fit_raises_when_window_is_past_the_data():
+def test_steady_state_fit_keeps_last_window_when_next_is_past_the_data():
     t_rel = np.arange(0.0, 3000.0, 5.0)
     filtered = _fickian_rise(t_rel, 2000.0, 1e-2)  # 3 τ_L is past the end
-    with pytest.raises(ValueError, match="did not reach steady state"):
-        fit_steady_state(t_rel, filtered, np.ones_like(t_rel, dtype=bool))
+    fit = fit_steady_state(t_rel, filtered, np.ones_like(t_rel, dtype=bool))
+    assert not fit.converged
+    assert fit.used.sum() >= 4
+    assert np.isfinite(fit.slope) and np.isfinite(fit.time_lag_s)
+
+
+def test_steady_state_fit_with_fixed_start():
+    tau = 1000.0
+    t_rel = np.arange(0.0, 15000.0, 5.0)
+    filtered = _fickian_rise(t_rel, tau, 1e-2)
+    fit = fit_steady_state(
+        t_rel, filtered, np.ones_like(t_rel, dtype=bool), start_s=6000
+    )
+    assert t_rel[fit.used][0] == 6000
+    assert fit.time_lag_s == pytest.approx(tau, rel=0.01)
 
 
 def test_diffusivity_from_time_lag():

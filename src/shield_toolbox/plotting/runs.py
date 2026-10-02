@@ -53,7 +53,8 @@ def plot_initial_time(
     noise = processed.noise
     t_rel = ts["time_since_init_s"].to_numpy()
     down_pa = ts["downstream_pa"].to_numpy()
-    t_max_s = noise.onset_s + 3600 if t_max_s is None else t_max_s
+    if t_max_s is None:
+        t_max_s = (noise.end_s if noise.onset_s is None else noise.onset_s) + 3600
     unit, scale = ("min", 60) if t_max_s <= 6 * 3600 else ("h", 3600)
 
     level = down_pa[noise.used][:60].mean()
@@ -77,13 +78,14 @@ def plot_initial_time(
         alpha=0.2,
         label="noise recording",
     )
-    ax.axvline(
-        noise.onset_s / scale,
-        color="tab:red",
-        lw=0.8,
-        ls="--",
-        label="detected rise onset",
-    )
+    if noise.onset_s is not None:
+        ax.axvline(
+            noise.onset_s / scale,
+            color="tab:red",
+            lw=0.8,
+            ls="--",
+            label="detected rise onset",
+        )
     ax.set_xlabel(f"time since t$_{{init}}$ ({unit})")
     ax.set_ylabel("P$_{down}$ (Pa, relative)")
     ax.set_title(

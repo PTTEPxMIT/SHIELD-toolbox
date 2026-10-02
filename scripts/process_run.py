@@ -94,14 +94,17 @@ def main() -> None:
         start_s, end_s = processed.steady_state_window_s
         print(f"{run.run_id}:")
         print(f"  t_init          : {processed.initial_time_s:.0f} s")
+        onset = "none" if noise.onset_s is None else f"{noise.onset_s / 60:.1f} min"
         print(
             f"  noise recording : {noise.start_s / 60:g}–{noise.end_s / 60:.3g} min "
-            f"(onset {noise.onset_s / 60:.1f} min, {noise.onset_from})"
+            f"(onset {onset}, {noise.onset_from})"
         )
         print(f"  background b    : {processed.background.slope:.2uP} Pa/s")
         print(
             f"  S∞              : {processed.steady_state.slope:.3e} Pa/s "
-            f"(window {start_s / 3600:.1f}–{end_s / 3600:.1f} h)"
+            f"(window {start_s / 3600:.1f}–{end_s / 3600:.1f} h"
+            + ("" if processed.steady_state.converged else ", τ_L not converged")
+            + ")"
         )
         print(
             f"  temperature     : {processed.sample_temperature_K:.1f} K "
