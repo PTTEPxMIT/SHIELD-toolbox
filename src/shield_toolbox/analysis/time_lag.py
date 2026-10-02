@@ -286,7 +286,8 @@ def fit_steady_state(
     a first guess of a quarter of the span until τ_L moves by less than 1 s
     (at most ``n_iter`` times; τ_L is floored at 60 s between iterations).
     If the next window start would leave fewer than four usable samples, the
-    iteration stops and keeps the last fit (``converged=False``). With
+    iteration stops and keeps the last fit (``converged=False``); if even the
+    first guess does, it starts from the last half of the span instead. With
     ``start_s`` the window start is fixed and there is no iteration.
 
     Args:
@@ -318,6 +319,10 @@ def fit_steady_state(
 
     tau = 0.25 * end_s  # first guess
     window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
+    if window.sum() < 4:
+        # first guess already past the data: start from the last half instead
+        tau = 0.5 * end_s / start_taus
+        window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
     slope, new_tau, cov = fit(window)
     converged = False
     for _ in range(n_iter - 1):

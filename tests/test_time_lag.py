@@ -139,6 +139,16 @@ def test_steady_state_fit_keeps_last_window_when_next_is_past_the_data():
     assert np.isfinite(fit.slope) and np.isfinite(fit.time_lag_s)
 
 
+def test_steady_state_fit_when_first_guess_is_past_the_data():
+    t_rel = np.arange(0.0, 3000.0, 5.0)
+    filtered = _fickian_rise(t_rel, 300.0, 1e-2)
+    fit = fit_steady_state(
+        t_rel, filtered, np.ones_like(t_rel, dtype=bool), start_taus=5, end_s=1000
+    )
+    assert fit.used.sum() >= 4
+    assert np.isfinite(fit.time_lag_s)
+
+
 def test_steady_state_fit_with_fixed_start():
     tau = 1000.0
     t_rel = np.arange(0.0, 15000.0, 5.0)

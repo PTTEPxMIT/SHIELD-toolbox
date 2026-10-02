@@ -28,10 +28,10 @@ from shield_toolbox import fetch_run, process_run
 from shield_toolbox.plotting import plot_run_overview
 
 sd.catalogue()  # what runs exist?
-p = process_run(fetch_run("26.09.25_run_1_17h59"), upstream_pressure_torr=500)
-p.permeability  # Φ  (9.7±1.1)e+11 H/(m·s·Pa^0.5)
+p = process_run(fetch_run("26.09.25_run_1_17h59"))
+p.permeability  # Φ  (9.5±1.1)e+11 H/(m·s·Pa^0.5)
 p.diffusivity_m2_per_s  # D  2.47e-11 m²/s (time-lag method)
-p.solubility  # S = Φ/D  (3.91±0.46)e+22 H/(m³·Pa^0.5)
+p.solubility  # S = Φ/D  (3.84±0.45)e+22 H/(m³·Pa^0.5)
 plot_run_overview(p)  # 2×2: the four steps of the method
 p.write("processed_runs")  # store the processed artifact
 ```
@@ -178,7 +178,7 @@ print(processed.noise.end_s / 60)  # 21.0 (noise recording ends, min after t_ini
 print(processed.background.slope)  # (1.602+/-0.013)e-04 Pa/s
 print(processed.steady_state.slope)  # 3.12e-03 Pa/s
 print(processed.time_lag_s / 3600)  # 1.80 h
-print(processed.permeability)  # Φ with the measured P_up
+print(processed.permeability)  # (9.5+/-1.1)e+11, measured upstream Baratron P_up
 
 processed.write("processed_runs")  # <base>/<substrate>/<coating>/<run_id>/
 plot_run_overview(processed)  # 2×2: steps 1–2, step 3, step 4, residuals
@@ -189,7 +189,7 @@ Every setting of the method is a keyword of `process_run` (the fields of
 
 | Keyword | Default | Meaning |
 |---------|---------|---------|
-| `upstream_pressure_torr` | measured | P_up in Φ; None = mean over the steady-state window |
+| `upstream_pressure_torr` | measured | P_up in Φ: the upstream Baratron mean over the steady-state window; a number overrides it |
 | `analysis_hours` | 30 | analyse the first N h after `t_init` (None = whole run) |
 | `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
 | `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |
@@ -220,7 +220,7 @@ directories):
 
 ```bash
 uv run python scripts/process_run.py 26.09.25_run_1_17h59 26.09.28_run_1_18h50 \
-    --upstream-torr 500 --save-plots figures
+    --save-plots figures
 ```
 
 ## Leak tests

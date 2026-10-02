@@ -490,7 +490,7 @@ def process_run(
         rig: Rig configuration; defaults to the one in service on the run
             date (:func:`~shield_toolbox.config.get_rig_config_for_date`).
         **settings: Any :class:`TimeLagSettings` field, e.g.
-            ``upstream_pressure_torr=500`` or ``analysis_hours=None``.
+            ``analysis_hours=None`` or ``steady_state_start_taus=2``.
 
     Raises:
         ValueError: If the run has no upstream or no downstream Baratron,

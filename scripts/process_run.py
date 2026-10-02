@@ -12,7 +12,7 @@ processed artifact (``timeseries.parquet`` + ``result.json``) under
 Example::
 
     uv run python scripts/process_run.py \\
-        26.09.25_run_1_17h59 26.09.28_run_1_18h50 --upstream-torr 500 --show
+        26.09.25_run_1_17h59 26.09.28_run_1_18h50 --show
 """
 
 from __future__ import annotations
