@@ -49,6 +49,8 @@ One of three sibling repos, cloned side-by-side, deliberately separate
   `analysis/time_lag.py` holds the run-processing method (t_init, noise
   recording, background fit, iterated steady-state fit from 3 τ_L);
   `processing.py` wires it into `process_run` (settings = `TimeLagSettings`).
+  `analysis/legacy.py` + `process_legacy_run` reproduce the original-rig
+  method (tail asymptote, τ from the start of the recording) for old runs.
   Leak tests (`process_leak_test`) are a standalone measurement — never
   paired with or subtracted from permeation runs.
 - `plotting/` — matplotlib only; every function accepts/returns `ax` and never

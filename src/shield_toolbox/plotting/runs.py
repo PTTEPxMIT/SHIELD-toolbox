@@ -14,7 +14,7 @@ import numpy as np
 from matplotlib.axes import Axes
 
 from shield_toolbox.analysis.time_lag import PRESSURISED_TORR
-from shield_toolbox.processing import ProcessedRun
+from shield_toolbox.processing import LegacyProcessedRun, ProcessedRun
 
 UP_COLOR = "tab:orange"
 DOWN_COLOR = "0.35"
@@ -317,3 +317,66 @@ def plot_run_overview(processed: ProcessedRun, axes=None):
     plot_steady_state(processed, ax=axes[2])
     plot_residuals(processed, ax=axes[3])
     return axes
+
+
+def plot_legacy_run(processed: LegacyProcessedRun, axes=None):
+    """Legacy method: upstream with its mean, and the downstream rise with
+    the tail asymptote extended to its P = 0 crossing (τ).
+
+    ``axes`` is any indexable of two ``Axes``; created if not given. Returns
+    the two axes as a flat array.
+    """
+    if axes is None:
+        _, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+    ax_up, ax_down = np.asarray(axes).ravel()
+    ts = processed.timeseries
+    hours = (ts["time_s"].to_numpy() - ts["time_s"].iloc[0]) / 3600
+
+    ax_up.plot(hours, ts["upstream_torr"], color=UP_COLOR, lw=1, label="upstream")
+    ax_up.axhline(
+        processed.upstream_pressure_torr,
+        color="tab:red",
+        ls="--",
+        lw=1,
+        label=f"mean of last 75 %: {processed.upstream_pressure_torr:.1f} Torr",
+    )
+    ax_up.set_xlabel("time since start of recording (h)")
+    ax_up.set_ylabel("Upstream pressure (Torr)")
+    ax_up.set_title(f"{processed.run_id} — upstream")
+    ax_up.legend(fontsize=8)
+
+    fit = processed.fit
+    ax_down.plot(
+        hours, ts["downstream_torr"], ":", color=DOWN_COLOR, lw=1.5, label="P$_{down}$"
+    )
+    used = ts["fit_used"].to_numpy()
+    ax_down.plot(
+        hours[used],
+        ts["downstream_torr"].to_numpy()[used],
+        color=FIT_COLOR,
+        lw=2,
+        alpha=0.4,
+        label="fitted (last 25 % of 0.05–0.95 Torr)",
+    )
+    line_s = np.array([fit.time_lag_s, hours[used][-1] * 3600])
+    ax_down.plot(
+        line_s / 3600,
+        fit.evaluate(line_s),
+        color=FIT_COLOR,
+        lw=1.5,
+        label=f"asymptote {fit.slope_torr_per_s:.2e} Torr/s",
+    )
+    ax_down.plot(fit.time_lag_s / 3600, 0, "o", color=FIT_COLOR)
+    ax_down.text(
+        fit.time_lag_s / 3600,
+        0,
+        f"  τ = {fit.time_lag_s / 3600:.2f} h",
+        color=FIT_COLOR,
+        va="bottom",
+    )
+    ax_down.set_ylim(bottom=0)
+    ax_down.set_xlabel("time since start of recording (h)")
+    ax_down.set_ylabel("Downstream pressure (Torr)")
+    ax_down.set_title(f"{processed.run_id} — legacy time lag")
+    ax_down.legend(fontsize=8)
+    return np.array([ax_up, ax_down])

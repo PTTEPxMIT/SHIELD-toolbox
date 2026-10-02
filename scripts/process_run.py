@@ -9,10 +9,16 @@ permeability (Takaishi–Sensui), diffusivity and solubility. It writes the
 processed artifact (``timeseries.parquet`` + ``result.json``) under
 ``<output>/<substrate>/<coating>/<run_id>/`` and draws the four-step overview.
 
-Example::
+``--legacy`` uses the original-rig method instead (``process_legacy_run``:
+tail asymptote through the last 25 % of the 0.05–0.95 Torr rise, τ from the
+start of the recording).
+
+Examples::
 
     uv run python scripts/process_run.py \\
         26.09.25_run_1_17h59 26.09.28_run_1_18h50 --show
+    uv run python scripts/process_run.py 25.10.10_run_1_08h38 --legacy \\
+        --substrate "316L steel" --coating none --thickness-mm 0.65
 """
 
 from __future__ import annotations
@@ -22,8 +28,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from shield_toolbox import fetch_run, load_run, process_run
-from shield_toolbox.plotting import plot_run_overview
+from shield_toolbox import fetch_run, load_run, process_legacy_run, process_run
+from shield_toolbox.plotting import plot_legacy_run, plot_run_overview
 from shield_toolbox.processing import SampleInfo
 
 
@@ -31,6 +37,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
         "runs", nargs="+", help="SHIELD-Data run IDs or local run directories"
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use the legacy original-rig method (process_legacy_run)",
     )
     parser.add_argument(
         "--upstream-torr",
@@ -82,6 +93,9 @@ def main() -> None:
 
     for run_ref in args.runs:
         run = load_run(run_ref) if Path(run_ref).is_dir() else fetch_run(run_ref)
+        if args.legacy:
+            legacy_run(run, sample, args)
+            continue
         processed = process_run(
             run,
             sample,
@@ -124,15 +138,40 @@ def main() -> None:
 
         fig, axes = plt.subplots(2, 2, figsize=(13, 8.5))
         plot_run_overview(processed, axes=axes)
-        fig.tight_layout()
-        if args.save_plots:
-            args.save_plots.mkdir(parents=True, exist_ok=True)
-            fig_path = args.save_plots / f"{processed.run_id}.png"
-            fig.savefig(fig_path, dpi=150)
-            print(f"  figure          : {fig_path}")
+        save_figure(fig, processed.run_id, args)
 
     if args.show:
         plt.show()
+
+
+def legacy_run(run, sample, args) -> None:
+    processed = process_legacy_run(run, sample)
+    out_dir = processed.write(args.output)
+    print(f"{run.run_id} (legacy method):")
+    print(f"  dP_down/dt      : {processed.fit.slope_torr_per_s:.3e} Torr/s")
+    print(
+        f"  temperature     : {processed.sample_temperature_K:.1f} K "
+        f"({processed.temperature_source})"
+    )
+    print(f"  P_up            : {processed.upstream_pressure_torr:.1f} Torr")
+    print(f"  permeability    : {processed.permeability:.2uP} H/(m·s·Pa^0.5)")
+    if processed.time_lag_s is not None:
+        print(f"  τ               : {processed.time_lag_s / 3600:.2f} h")
+        print(f"  diffusivity     : {processed.diffusivity_m2_per_s:.2e} m²/s")
+        print(f"  solubility      : {processed.solubility:.2uP} H/(m³·Pa^0.5)")
+    print(f"  written to      : {out_dir}")
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+    plot_legacy_run(processed, axes=axes)
+    save_figure(fig, processed.run_id, args)
+
+
+def save_figure(fig, run_id: str, args) -> None:
+    fig.tight_layout()
+    if args.save_plots:
+        args.save_plots.mkdir(parents=True, exist_ok=True)
+        fig_path = args.save_plots / f"{run_id}.png"
+        fig.savefig(fig_path, dpi=150)
+        print(f"  figure          : {fig_path}")
 
 
 if __name__ == "__main__":
