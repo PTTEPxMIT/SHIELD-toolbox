@@ -1,7 +1,8 @@
 # SHIELD-toolbox
 
 `shield_toolbox` — the analysis package for the **SHIELD** hydrogen gas-driven
-permeation rig. It processes recorded runs with the time-lag method to extract
+permeation rig. It processes recorded runs with the background-subtracted
+time-lag method to extract
 **permeability, diffusivity, and solubility** of materials and coatings
 relevant to fusion engineering.
 
@@ -26,19 +27,19 @@ import shield_data as sd
 from shield_toolbox import fetch_run, process_run
 from shield_toolbox.plotting import plot_run_overview
 
-sd.catalogue()                                  # what runs exist?
-p = process_run(fetch_run("25.10.06_run_1_10h41"))
-p.permeability                                  # Φ  (2.69±0.53)e+12 H/(m·s·Pa^0.5)
-p.diffusivity_m2_per_s                          # D  1.22e-10 m²/s (time-lag method)
-p.solubility                                    # S = Φ/D  (2.20±0.44)e+22 H/(m³·Pa^0.5)
-plot_run_overview(p)                            # 2×2 diagnostic figure
-p.write("processed_runs")                       # store the processed artifact
+sd.catalogue()  # what runs exist?
+p = process_run(fetch_run("26.09.25_run_1_17h59"))
+p.permeability  # Φ  (9.5±1.1)e+11 H/(m·s·Pa^0.5)
+p.diffusivity_m2_per_s  # D  2.47e-11 m²/s (time-lag method)
+p.solubility  # S = Φ/D  (3.84±0.45)e+22 H/(m³·Pa^0.5)
+plot_run_overview(p)  # 2×2: the four steps of the method
+p.write("processed_runs")  # store the processed artifact
 ```
 
 Each step is documented in the sections below; once several runs are
 processed, [fit their temperature dependence](#campaign-analysis-arrhenius-fits-across-runs).
 For an executable walkthrough of the whole path — catalogue → fetch →
-process → overview figure → Arrhenius fit — open
+process → step-by-step figures → sensitivity checks → Arrhenius fit — open
 [`notebooks/example_run_analysis.ipynb`](notebooks/example_run_analysis.ipynb).
 
 ## Layout
@@ -129,45 +130,99 @@ everything downstream (`process_run`, plotting) behaves the same.
 
 ## Processing a run: Φ, τ, D, S
 
-`process_run` turns a loaded run into a `ProcessedRun`: it calibrates the
-Baratron voltages to pressures, restricts analysis to the valid run window
-(after the upstream gauge comes off its saturation cap), averages the stable
-upstream plateau, fits the steady-state downstream rise, and extracts the
-transport properties:
+`process_run` turns a loaded run into a `ProcessedRun` with the
+background-subtracted time-lag method. It calibrates the Baratron voltages to
+pressures, restricts analysis to the valid run window (both Baratrons off
+their saturation caps), and then:
 
-- **Permeability Φ** from the rise slope (Takaishi–Sensui
-  thermal-transpiration corrected, uncertainty propagated), H/(m·s·Pa^0.5)
-- **Time lag τ** from where the steady-state fit extrapolates back to the
-  pre-breakthrough baseline, measured from the loading-valve opening
-  (`v3_open_time`)
-- **Diffusivity D = e²/(6τ)**, m²/s
+1. **Noise recording.** Before hydrogen has crossed the sample, the sealed
+   downstream volume sees only the background (seal leakage plus outgassing).
+   The noise recording runs from 1 min after `t_init` to a quarter of the
+   pre-rise time before the detected onset of the downstream rise (i.e. to
+   0.75 × onset; the early flux builds gradually). The onset is the first
+   10 min block more than 5σ above the background line fitted before it; a
+   1 min block search takes over when the rise starts within minutes (high
+   temperature). The search covers the whole run; if no onset is detected,
+   the noise recording is the first 30 min after it starts.
+2. **Initial time.** `t_init` is the first sample where the upstream passes
+   half its plateau.
+3. **Background fit.** A straight line `a + b·(t − t_init)` through the noise
+   recording.
+4. **Time lag on filtered data.** The background line is subtracted, so the
+   filtered signal starts at 0 at `t_init`. The steady-state line
+   `S∞·(t − t_init − τ_L)` is fitted from 3 τ_L (iterated) to the end of
+   usable data: the first 30 h after `t_init`, downstream below 0.95 Torr,
+   upstream pressurised. If the next 3 τ_L start would lie past the data,
+   the iteration keeps its last fit (`steady_state.converged` is False).
+
+`process_run` always returns a fit and never decides a run is unusable;
+judging whether the rise is at steady state is up to you (the step plots
+and `converged` flag help).
+
+From the fit:
+
+- **Permeability Φ** from `S∞` (Takaishi–Sensui thermal-transpiration
+  corrected at the last downstream pressure in the window, mean sample
+  temperature over the window, upstream Baratron mean over the window minus
+  its pre-start bias — the reading before the step — just as the downstream
+  background is removed; uncertainty propagated), H/(m·s·Pa^0.5)
+- **Time lag τ_L**, the steady-state line's zero crossing after `t_init`
+- **Diffusivity D = e²/(6τ_L)**, m²/s
 - **Solubility S = Φ/D**, H/(m³·Pa^0.5)
 
 ```python
 from shield_toolbox import fetch_run, process_run
 from shield_toolbox.plotting import plot_run_overview
 
-processed = process_run(fetch_run("25.10.06_run_1_10h41"))
-print(processed.permeability)         # (2.69+/-0.53)e+12
-print(processed.time_lag_s)           # 1055.9
-print(processed.diffusivity_m2_per_s) # 1.22e-10
-print(processed.solubility)           # (2.20+/-0.44)e+22
+processed = process_run(fetch_run("26.09.25_run_1_17h59"))
+print(processed.initial_time_s)  # 63.8 (s into the recording)
+print(processed.noise.end_s / 60)  # 21.0 (noise recording ends, min after t_init)
+print(processed.background.slope)  # (1.602+/-0.013)e-04 Pa/s
+print(processed.steady_state.slope)  # 3.12e-03 Pa/s
+print(processed.time_lag_s / 3600)  # 1.80 h
+print(processed.permeability)  # (9.5+/-1.1)e+11, measured upstream Baratron P_up
 
-processed.write("processed_runs")     # <base>/<substrate>/<coating>/<run_id>/
-plot_run_overview(processed)          # 2×2: upstream, downstream, T, Φ(t)
+processed.write("processed_runs")  # <base>/<substrate>/<coating>/<run_id>/
+plot_run_overview(processed)  # 2×2: steps 1–2, step 3, step 4, residuals
 ```
+
+Every setting of the method is a keyword of `process_run` (the fields of
+`TimeLagSettings`), stored in `result.json`:
+
+| Keyword | Default | Meaning |
+|---------|---------|---------|
+| `upstream_pressure_torr` | measured | P_up in Φ: the upstream Baratron mean over the steady-state window minus its pre-start bias (median of the last 60 s before the step); a number overrides it |
+| `analysis_hours` | 30 | analyse the first N h after `t_init` (None = whole run) |
+| `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
+| `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |
+| `steady_state_end_s` | last usable | steady-state window end, s after `t_init` |
+| `noise_start_s` | 60 | noise recording start, s after `t_init` |
+| `noise_margin_fraction` | 0.25 | noise recording ends this fraction of the pre-rise time before the onset |
+| `onset_sigma` | 5 | onset detection threshold (standard errors) |
+| `noise_end_s` | detected | manual end of the noise recording |
+| `background_slope_pa_per_s` | fitted | override `b` (sensitivity checks) |
+| `downstream_max_torr` | 0.95 | exclude downstream readings at or above this |
+
+`processed.refit(**settings)` re-runs the analysis on the stored time series
+with some settings changed — the example notebook uses it for its window and
+background-slope sensitivity tables. The plots in `shield_toolbox.plotting`
+draw each step (`plot_initial_time`, `plot_background`, `plot_steady_state`,
+`plot_residuals`) and overlay runs (`plot_filtered_rises`).
 
 The sample description (substrate/coating/thickness) comes from the run
 metadata automatically; the rig constants come from the versioned rig config
 for the run date. `write()` stores `timeseries.parquet` (full processed time
-series) and `result.json` (all scalar results + provenance). Runs where no
-valid time lag exists (e.g. the fit extrapolates below the baseline) store
-`null` for τ/D/S rather than a nonsense number.
+series, including the filtered signal and the noise-recording and
+steady-state masks) and `result.json` (all scalar results, settings and
+provenance). If the steady-state line crosses zero before `t_init`, τ/D/S are
+stored as `null` rather than a nonsense number.
 
-Command-line equivalent for one or many runs:
+Command-line equivalent for one or many runs (run IDs or local run
+directories):
 
 ```bash
-uv run python scripts/process_run.py ../SHIELD-Data/run_data/25.10.06_run_1_10h41 --show
+uv run python scripts/process_run.py 26.09.25_run_1_17h59 26.09.28_run_1_18h50 \
+    --save-plots figures
 ```
 
 ## Leak tests

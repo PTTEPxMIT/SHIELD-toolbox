@@ -30,6 +30,7 @@ from shield_toolbox.processing import (  # noqa: E402  (needs __version__)
     LeakTestResult,
     ProcessedRun,
     SampleInfo,
+    TimeLagSettings,
     process_leak_test,
     process_run,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "ProcessedRun",
     "RigConfig",
     "SampleInfo",
+    "TimeLagSettings",
     "__version__",
     "arrhenius",
     "convert_run",
