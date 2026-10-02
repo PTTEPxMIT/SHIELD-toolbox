@@ -170,37 +170,24 @@ Command-line equivalent for one or many runs:
 uv run python scripts/process_run.py ../SHIELD-Data/run_data/25.10.06_run_1_10h41 --show
 ```
 
-## Background-leak correction (leak tests)
+## Leak tests
 
 A **leak test** (`run_type="leak_test"` in the DAS) is a short run recorded
 with the sample installed and sealed, the upstream side unpressurized, and
 the downstream volume isolated at a setpoint inside the 1 Torr Baratron's
-range. Its downstream dP/dt is background — seal leakage plus outgassing,
-not permeation — and can be subtracted from later permeation runs on the
-same sample:
+range. Its downstream dP/dt is the background of the sealed assembly — seal
+leakage plus outgassing. It is a standalone diagnostic: it is not applied to
+any permeation run.
 
 ```python
-import shield_data as sd
-from shield_toolbox import fetch_run, find_leak_test_id, process_leak_test, process_run
+from shield_toolbox import fetch_run, process_leak_test
 
-run = fetch_run("26.09.01_run_1_10h00")
-
-# Pair the run with its sample's most recent prior leak test (by sample_id).
-leak_id = find_leak_test_id(sd.catalogue(), run)
-leak = process_leak_test(fetch_run(leak_id)) if leak_id else None
-print(leak.rate_torr_per_s)           # e.g. 2.1e-06 (Torr/s)
-
-processed = process_run(run, leak=leak)   # opt-in: omit leak for uncorrected
+leak = process_leak_test(fetch_run("26.09.21_run_1_15h25"))
+print(leak.rate_torr_per_s)  # e.g. 4.2e-07 (Torr/s)
 ```
 
-The correction subtracts the leak accumulated since permeation start from
-the downstream trace before fitting, so slope, permeability, time lag, and
-the Φ(t) trace stay mutually consistent; the applied rate and source
-leak-test run ID are stored in `result.json` (`results.leak`) and surface as
-`leak_rate_torr_per_s` / `leak_test_run_id` columns in `load_results`.
-Re-running a leak test (e.g. after re-sealing) automatically supersedes the
-old one for all later runs. `LeakTestResult.write()` stores leak tests in
-the same `<substrate>/<coating>/<run_id>/` tree; `load_results` skips them.
+`LeakTestResult.write()` stores leak tests in the same
+`<substrate>/<coating>/<run_id>/` tree; `load_results` skips them.
 
 ## Campaign analysis: Arrhenius fits across runs
 

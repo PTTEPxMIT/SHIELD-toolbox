@@ -4,9 +4,8 @@ A leak test is a short recorded run taken with the sample installed and
 sealed, the upstream side unpressurized, and the downstream volume isolated
 from the pump at a setpoint inside the 1 Torr Baratron's range. Any downstream
 pressure rise is then background — seal leakage plus outgassing, not
-permeation — and its rate is the offset subtracted from the downstream rise
-of subsequent permeation runs on the same sample (``process_run(...,
-leak=...)``).
+permeation — so its rate is the background leak rate of the sealed assembly.
+It is a standalone diagnostic and is not applied to any permeation run.
 
 Unlike the permeation rise fit, the leak fit is a plain unweighted straight
 line over the isolated window: a constant background rate has no "later

@@ -45,9 +45,7 @@ def load_results(
         ``temperature_source``, ``upstream_torr``, ``permeability`` /
         ``permeability_err``, ``time_lag_s``, ``diffusivity_m2_per_s``,
         ``solubility`` / ``solubility_err`` (NaN where a run has no valid
-        time lag), ``leak_rate_torr_per_s`` / ``leak_test_run_id`` (the
-        background-leak correction applied, None when uncorrected),
-        ``furnace_setpoint``, and ``result_path``.
+        time lag), ``furnace_setpoint``, and ``result_path``.
 
     Raises:
         FileNotFoundError: If no ``result.json`` is found under ``base_dir``
@@ -83,8 +81,6 @@ def load_results(
                 "diffusivity_m2_per_s": results.get("diffusivity", {}).get("value"),
                 "solubility": results.get("solubility", {}).get("nominal"),
                 "solubility_err": results.get("solubility", {}).get("std_dev"),
-                "leak_rate_torr_per_s": results.get("leak", {}).get("rate_torr_per_s"),
-                "leak_test_run_id": results.get("leak", {}).get("leak_test_run_id"),
                 "furnace_setpoint": result.get("run_info", {}).get("furnace_setpoint"),
                 "result_path": str(result_path),
             }

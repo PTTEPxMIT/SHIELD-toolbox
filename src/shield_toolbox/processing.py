@@ -133,11 +133,6 @@ class ProcessedRun:
     """Pre-breakthrough downstream pressure used for the time-lag intercept."""
     furnace_setpoint: float | None
     valve_times_s: dict[str, float]
-    leak_rate_torr_per_s: float | None = None
-    """Background leak rate (Torr/s) subtracted from the downstream trace
-    before fitting, or None when no leak correction was applied."""
-    leak_test_run_id: str | None = None
-    """Run ID of the leak test the correction came from, when known."""
 
     def result_dict(self) -> dict:
         """The scalar results and provenance, as written to ``result.json``."""
@@ -173,11 +168,6 @@ class ProcessedRun:
                 "source": self.temperature_source,
             },
             "results": {
-                "leak": {
-                    "applied": self.leak_rate_torr_per_s is not None,
-                    "rate_torr_per_s": self.leak_rate_torr_per_s,
-                    "leak_test_run_id": self.leak_test_run_id,
-                },
                 "upstream_pressure_torr": self.upstream_plateau.average_torr,
                 "downstream_rise_torr_per_s": self.downstream_fit.slope_torr_per_s,
                 "downstream_fit_intercept_torr": self.downstream_fit.intercept_torr,
@@ -225,13 +215,13 @@ class ProcessedRun:
 
 @dataclass(frozen=True)
 class LeakTestResult:
-    """A processed leak test: the background leak rate for one sample.
+    """A processed leak test: the background leak rate of the sealed assembly.
 
     Produced by :func:`process_leak_test` from a ``run_type="leak_test"``
     run — recorded with the sample installed and sealed, upstream
     unpressurized, and the downstream volume isolated at a setpoint inside
-    the 1 Torr Baratron's range. Pass it to :func:`process_run` as ``leak=``
-    to correct subsequent permeation runs on the same sample.
+    the 1 Torr Baratron's range. A standalone diagnostic: it is not applied
+    to any permeation run.
     """
 
     run_id: str
@@ -322,8 +312,7 @@ def process_leak_test(
     Args:
         run: The loaded leak-test run.
         sample: Sample mounted during the test; defaults to the metadata's
-            sample description. Its ``sample_id`` is what pairs this leak
-            test with later permeation runs.
+            sample description.
         rig: Rig configuration; defaults to the one in service on the run
             date.
 
@@ -384,7 +373,6 @@ def process_run(
     run: PermeationRun,
     sample: SampleInfo | None = None,
     rig: RigConfig | None = None,
-    leak: LeakTestResult | float | None = None,
 ) -> ProcessedRun:
     """Process a loaded run into a :class:`ProcessedRun`.
 
@@ -395,14 +383,6 @@ def process_run(
             metadata (:meth:`SampleInfo.from_metadata`).
         rig: Rig configuration; defaults to the one in service on the run
             date (:func:`~shield_toolbox.config.get_rig_config_for_date`).
-        leak: Background leak correction — a :class:`LeakTestResult` from
-            :func:`process_leak_test` (normally the sample's most recent
-            prior leak test, see
-            :func:`~shield_toolbox.io.fetch.find_leak_test_id`) or a bare
-            rate in Torr/s. The leak accumulated since permeation start is
-            subtracted from the downstream trace before fitting, so slope,
-            permeability, time lag, and the Φ(t) trace are all corrected
-            consistently. Default None: no correction (existing behaviour).
 
     Raises:
         ValueError: If the run has no upstream or no downstream Baratron,
@@ -432,34 +412,8 @@ def process_run(
     temperature_K, temperature_source = _sample_temperature(run, rig, in_run)
 
     time_in = run.time_s[in_run]
-
-    # Permeation start (time-lag zero) — resolved before the fits because it
-    # also anchors the leak correction.
-    if "v3_open_time" in run.valve_times_s:
-        permeation_start_s = run.valve_times_s["v3_open_time"]
-        permeation_start_source = "v3_open_time"
-    else:
-        permeation_start_s = float(time_in[0])
-        permeation_start_source = "window_start"
-
-    # Background-leak correction: subtract the leak accumulated since
-    # permeation start, leaving a permeation-only trace. The baseline at the
-    # start is untouched, so slope, intercept, and time lag stay consistent.
-    if leak is None:
-        leak_rate = None
-        leak_test_run_id = None
-        analysed_torr = downstream_torr
-    else:
-        if isinstance(leak, LeakTestResult):
-            leak_rate = leak.fit.rate_torr_per_s
-            leak_test_run_id = leak.run_id
-        else:
-            leak_rate = float(leak)
-            leak_test_run_id = None
-        analysed_torr = downstream_torr - leak_rate * (run.time_s - permeation_start_s)
-
     plateau = stable_upstream_pressure(time_in, upstream_torr[in_run])
-    fit_in = fit_downstream_rise(time_in, analysed_torr[in_run])
+    fit_in = fit_downstream_rise(time_in, downstream_torr[in_run])
 
     # Expand the fit mask (defined on the in-run window) to the full trace.
     fit_used = np.zeros(len(run.time_s), dtype=bool)
@@ -481,8 +435,14 @@ def process_run(
 
     # Time-lag method: τ from the steady-state fit's baseline crossing,
     # counted from the loading-valve opening; then D = e²/6τ and S = Φ/D.
+    if "v3_open_time" in run.valve_times_s:
+        permeation_start_s = run.valve_times_s["v3_open_time"]
+        permeation_start_source = "v3_open_time"
+    else:
+        permeation_start_s = float(time_in[0])
+        permeation_start_source = "window_start"
     baseline_torr = downstream_baseline_torr(
-        run.time_s, analysed_torr, permeation_start_s
+        run.time_s, downstream_torr, permeation_start_s
     )
     if fit.slope_torr_per_s > 0:
         time_lag_s = time_lag_from_fit(fit, baseline_torr, permeation_start_s)
@@ -502,7 +462,7 @@ def process_run(
     permeability_t = np.full(len(run.time_s), np.nan)
     permeability_t[in_run] = apparent_permeability_vs_time(
         time_in,
-        analysed_torr[in_run],
+        downstream_torr[in_run],
         upstream_pressure_torr=plateau.average_torr,
         temperature_K=temperature_K,
         sample_thickness_m=sample.thickness_m,
@@ -518,8 +478,6 @@ def process_run(
         fit_used,
         permeability_t,
     )
-    if leak_rate is not None:
-        timeseries["downstream_leak_corrected_torr"] = analysed_torr
 
     return ProcessedRun(
         run_id=run.run_id,
@@ -539,8 +497,6 @@ def process_run(
         downstream_baseline_torr=baseline_torr,
         furnace_setpoint=run.furnace_setpoint,
         valve_times_s=run.valve_times_s,
-        leak_rate_torr_per_s=leak_rate,
-        leak_test_run_id=leak_test_run_id,
     )
 
 

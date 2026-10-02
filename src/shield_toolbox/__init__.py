@@ -16,7 +16,6 @@ from shield_toolbox.io import (
     PermeationRun,
     convert_run,
     fetch_run,
-    find_leak_test_id,
     load_furnace_log,
     load_run,
 )
@@ -45,7 +44,6 @@ __all__ = [
     "arrhenius",
     "convert_run",
     "fetch_run",
-    "find_leak_test_id",
     "get_rig_config",
     "get_rig_config_for_date",
     "list_rig_versions",
