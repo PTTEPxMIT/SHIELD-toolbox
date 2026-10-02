@@ -15,6 +15,7 @@ from shield_toolbox.analysis.steady_state import (
     fit_downstream_rise,
     permeability_takaishi_sensui,
     stable_upstream_pressure,
+    takaishi_sensui_ratio,
 )
 from shield_toolbox.analysis.time_lag import (
     diffusivity_from_time_lag,
@@ -44,6 +45,7 @@ __all__ = [
     "furnace_temperature_offset",
     "leak_molar_rate_mol_per_s",
     "permeability_takaishi_sensui",
+    "takaishi_sensui_ratio",
     "run_window_mask",
     "smoothed_pressure_rise_pa_per_s",
     "solubility_from_permeability",

@@ -1,10 +1,13 @@
 """Tests for shield_toolbox.analysis.
 
-Parity values are pinned against ``shield_das.analysis`` (the live DAS
-implementation) on synthetic data. The permeability differs from the DAS
-value only through the Torr→Pa factor (133.322 here vs 133.3 legacy),
-bounded below 1e-3 relative.
+Plateau and rise-fit parity values are pinned against ``shield_das.analysis``
+(the live DAS implementation) on synthetic data. The Takaishi–Sensui
+permeability deliberately departs from the legacy formula (which dropped the
+hot downstream volume), so it is tested against physical limits and an
+independent mole count instead.
 """
+
+import dataclasses
 
 import numpy as np
 import pytest
@@ -17,7 +20,9 @@ from shield_toolbox.analysis import (
     permeability_takaishi_sensui,
     run_window_mask,
     stable_upstream_pressure,
+    takaishi_sensui_ratio,
 )
+from shield_toolbox.constants import N_A, TORR_TO_PA, R
 
 RIG = get_rig_config("v1")
 
@@ -70,7 +75,94 @@ def test_fit_downstream_rise_needs_reliable_samples():
         fit_downstream_rise([0.0, 1.0, 2.0], [1.5, 1.6, 1.7])
 
 
-def test_permeability_takaishi_sensui_parity(synthetic_run):
+def test_takaishi_sensui_ratio_limits():
+    # Free-molecular limit: p_hot/p_cold -> sqrt(T_hot/T_cold), no p dependence.
+    ratio, p_dratio = takaishi_sensui_ratio(1e-9, 0.014, 600.0, 300.0)
+    assert ratio == pytest.approx(np.sqrt(2.0), rel=1e-4)
+    assert p_dratio == pytest.approx(0.0, abs=1e-4)
+    # Continuum limit: equal pressures.
+    ratio, p_dratio = takaishi_sensui_ratio(100.0, 0.014, 600.0, 300.0)
+    assert ratio == pytest.approx(1.0, rel=1e-6)
+    assert p_dratio == pytest.approx(0.0, abs=1e-6)
+
+
+def test_takaishi_sensui_ratio_table_constants():
+    # Hand evaluation of TS eqn (6) with the H2 constants of their Table 1:
+    # X = 2·p·d/(T1+T2) = 2·0.3·14/900 Torr·mm/K.
+    x = 2 * 0.3 * 14 / 900
+    q = 1.24e5 * x**2 + 8.00e2 * x + 10.6 * np.sqrt(x)
+    expected = (q + np.sqrt(600 / 300)) / (q + 1)
+    ratio, _ = takaishi_sensui_ratio(0.3, 0.014, 600.0, 300.0)
+    assert ratio == pytest.approx(expected, rel=1e-12)
+
+
+def test_takaishi_sensui_ratio_derivative_matches_finite_difference():
+    p, h = 0.01, 1e-7
+    _, p_dratio = takaishi_sensui_ratio(p, 0.014, 567.0, 300.0)
+    up, _ = takaishi_sensui_ratio(p + h, 0.014, 567.0, 300.0)
+    down, _ = takaishi_sensui_ratio(p - h, 0.014, 567.0, 300.0)
+    assert p_dratio == pytest.approx(p * (up - down) / (2 * h), rel=1e-5)
+
+
+def _permeability(rig, p_down_torr=0.3, slope=1e-6, t_sample=567.0):
+    return permeability_takaishi_sensui(
+        slope_torr_per_s=slope,
+        temperature_K=t_sample,
+        sample_thickness_m=0.001,
+        downstream_pressure_torr=p_down_torr,
+        upstream_pressure_torr=500.0,
+        rig=rig,
+    )
+
+
+def _phi_from_molar_flow(rig, molar_flow):
+    flux = molar_flow / rig.sample_area_m2 * N_A
+    return flux * 0.001 / (500.0 * TORR_TO_PA) ** 0.5
+
+
+def test_permeability_without_hot_volume_is_ideal_gas():
+    rig = dataclasses.replace(RIG, v1_v2_split_ratio=ufloat(0.0, 1e-9))
+    molar = 1e-6 * TORR_TO_PA * RIG.downstream_volume_m3.nominal_value / (R * 300.0)
+    assert _permeability(rig).nominal_value == pytest.approx(
+        _phi_from_molar_flow(rig, molar), rel=1e-12
+    )
+
+
+def test_permeability_counts_hot_volume_in_continuum_limit():
+    # At 100 Torr through a 14 mm tube the hot section sits at the gauge pressure,
+    # so it holds V_hot·p/(R·T_sample).
+    rig = dataclasses.replace(RIG, v1_v2_split_ratio=ufloat(0.5, 1e-9))
+    v = RIG.downstream_volume_m3.nominal_value
+    molar = 1e-6 * TORR_TO_PA * (0.5 * v / 300.0 + 0.5 * v / 567.0) / R
+    assert _permeability(rig, p_down_torr=100.0).nominal_value == pytest.approx(
+        _phi_from_molar_flow(rig, molar), rel=1e-6
+    )
+
+
+def test_permeability_matches_mole_count_derivative():
+    # Independent check: differentiate n(p) = V_c·p/(R·T_c) + V_h·f(p)·p/(R·T_h).
+    rig = dataclasses.replace(RIG, v1_v2_split_ratio=ufloat(0.5, 1e-9))
+    v, t_c, t_h, d = (
+        RIG.downstream_volume_m3.nominal_value,
+        300.0,
+        567.0,
+        rig.sample_diameter_m,
+    )
+
+    def moles(p_torr):
+        f, _ = takaishi_sensui_ratio(p_torr, d, t_h, t_c)
+        p_pa = p_torr * TORR_TO_PA
+        return (0.5 * v * p_pa / t_c + 0.5 * v * f * p_pa / t_h) / R
+
+    for p in (0.001, 0.05, 0.3):
+        h = p * 1e-4
+        molar = 1e-6 * (moles(p + h) - moles(p - h)) / (2 * h)
+        assert _permeability(rig, p_down_torr=p).nominal_value == pytest.approx(
+            _phi_from_molar_flow(rig, molar), rel=1e-6
+        )
+
+
+def test_permeability_propagates_volume_uncertainty(synthetic_run):
     time_s, upstream_torr, downstream_torr = synthetic_run
     plateau = stable_upstream_pressure(time_s, upstream_torr)
     fit = fit_downstream_rise(time_s, downstream_torr)
@@ -82,11 +174,12 @@ def test_permeability_takaishi_sensui_parity(synthetic_run):
         upstream_pressure_torr=plateau.average_torr,
         rig=RIG,
     )
-    # Pinned against shield_das.calculate_permeability_from_flux
-    # (26702655614754.457 ± 5210003390681.288); rel tol covers the
-    # 133.322-vs-133.3 Torr→Pa difference (~8e-5).
-    assert perm.nominal_value == pytest.approx(26702655614754.457, rel=1e-3)
-    assert perm.std_dev == pytest.approx(5210003390681.288, rel=2e-2)
+    assert perm.nominal_value > 0
+    # Volume (±12 %) and hot fraction both contribute.
+    assert (
+        perm.std_dev / perm.nominal_value
+        > RIG.downstream_volume_m3.std_dev / RIG.downstream_volume_m3.nominal_value
+    )
 
 
 def test_fit_arrhenius_recovers_known_line():

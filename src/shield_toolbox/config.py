@@ -120,15 +120,17 @@ SHIELD_V2 = RigConfig(
     downstream_volume_m3=ufloat(7.09e-5, 6.45e-6),
     sample_diameter_m=0.014,
     ambient_temperature_K=300.0,
-    v1_v2_split_ratio=ufloat(0.35, 0.1),  # carried over from v1 — not re-estimated
+    v1_v2_split_ratio=ufloat(
+        0.5, 0.1
+    ),  # hot-side fraction for the rebuilt layout (Colin, 2026-09-25)
     furnace_setpoint_offset_K=0.0,
     gauges=SHIELD_V1.gauges,
     thermocouple=TypeKThermocouple(),
     notes=(
         "Rebuilt SHIELD rig (September 2026): downstream volume "
         "(7.09 ± 0.65)e-5 m³ and a 14 mm sample fitting, both measured on the "
-        "rebuild. Gauges unchanged. The V1/V2 hot-side volume split is still "
-        "the v1 estimate."
+        "rebuild. Gauges unchanged. Hot-side (V1) fraction of the downstream "
+        "volume 0.5 ± 0.1 for the rebuilt layout."
     ),
 )
 
