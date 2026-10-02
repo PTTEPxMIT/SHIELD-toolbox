@@ -78,12 +78,19 @@ class CVM211:
         )
 
 
+TYPE_K_MIN_MV = -5.891
+"""Lower end of the NIST ITS-90 inverse polynomial range for Type K, mV."""
+
+TYPE_K_MAX_MV = 54.886
+"""Upper end of the NIST ITS-90 inverse polynomial range for Type K, mV."""
+
+
 def _typek_coefficients(mv: float) -> tuple[float, ...]:
     """NIST ITS-90 inverse polynomial coefficients for a Type K thermocouple.
 
     Valid from -5.891 mV to 54.886 mV; three sub-ranges.
     """
-    if mv < -5.892 or mv > 54.887:
+    if mv < TYPE_K_MIN_MV - 0.001 or mv > TYPE_K_MAX_MV + 0.001:
         raise ValueError("Voltage out of valid Type K range (-5.891 to 54.886 mV).")
     if mv < 0:
         # -5.891 mV to 0 mV

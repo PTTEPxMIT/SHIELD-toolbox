@@ -15,6 +15,7 @@ from uncertainties import ufloat
 
 from shield_toolbox import get_rig_config
 from shield_toolbox.analysis import (
+    downstream_window_mask,
     fit_arrhenius,
     fit_downstream_rise,
     permeability_takaishi_sensui,
@@ -46,6 +47,18 @@ def test_run_window_starts_after_last_saturated_sample():
     np.testing.assert_array_equal(
         run_window_mask(voltage),
         [False, False, False, False, False, True, True],
+    )
+
+
+def test_downstream_window_all_true_when_never_saturated():
+    assert downstream_window_mask(np.array([0.3, 5.0, 9.9])).all()
+
+
+def test_downstream_window_ends_at_first_saturated_sample():
+    # Readings after the first saturation are excluded even if they drop again.
+    voltage = np.array([0.4, 6.0, 9.95, 10.12, 10.12, 9.0])
+    np.testing.assert_array_equal(
+        downstream_window_mask(voltage), [True, True, True, False, False, False]
     )
 
 
