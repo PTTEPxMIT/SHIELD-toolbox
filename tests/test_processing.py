@@ -173,6 +173,18 @@ def test_fast_rise_uses_one_minute_onset():
     assert processed.time_lag_s == pytest.approx(900, rel=0.05)
 
 
+def test_upstream_pre_start_bias_is_subtracted():
+    run = _permeation_run()
+    # Add a 4 Torr zero offset to the upstream gauge (1000 Torr FS: V = torr/100).
+    run.gauge_voltages["Baratron626D_1KT"] = (
+        run.gauge_voltages["Baratron626D_1KT"] + 0.04
+    )
+    processed = process_run(run, SAMPLE)
+    assert processed.upstream_bias_torr == pytest.approx(4.0)
+    assert processed.upstream_pressure_measured_torr == pytest.approx(500.0)
+    assert processed.upstream_pressure_torr == pytest.approx(500.0)
+
+
 def test_settings_and_refit(processed):
     fixed = processed.refit(upstream_pressure_torr=400.0)
     assert fixed.upstream_pressure_torr == 400.0

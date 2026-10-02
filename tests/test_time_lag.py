@@ -13,6 +13,7 @@ from shield_toolbox.analysis import (
     initial_time,
     rise_onset,
     solubility_from_permeability,
+    upstream_zero,
 )
 
 THICKNESS_M = 0.00088
@@ -175,3 +176,11 @@ def test_solubility_propagates_uncertainty():
     assert sol.std_dev == pytest.approx(4.0e21)
     with pytest.raises(ValueError, match="positive"):
         solubility_from_permeability(perm, 0.0)
+
+
+def test_upstream_zero_uses_last_minute_before_step():
+    t_rel = np.arange(-400.0, 100.0)
+    upstream = np.where(t_rel < -300, 8.6, 0.3)  # re-zeroed live, then the step
+    upstream[t_rel >= -2] = 500.0
+    assert upstream_zero(t_rel, upstream) == pytest.approx(0.3)
+    assert upstream_zero(t_rel[t_rel >= 0], upstream[t_rel >= 0]) is None

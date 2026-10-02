@@ -163,7 +163,9 @@ From the fit:
 
 - **Permeability Φ** from `S∞` (Takaishi–Sensui thermal-transpiration
   corrected at the last downstream pressure in the window, mean sample
-  temperature over the window, uncertainty propagated), H/(m·s·Pa^0.5)
+  temperature over the window, upstream Baratron mean over the window minus
+  its pre-start bias — the reading before the step — just as the downstream
+  background is removed; uncertainty propagated), H/(m·s·Pa^0.5)
 - **Time lag τ_L**, the steady-state line's zero crossing after `t_init`
 - **Diffusivity D = e²/(6τ_L)**, m²/s
 - **Solubility S = Φ/D**, H/(m³·Pa^0.5)
@@ -189,7 +191,7 @@ Every setting of the method is a keyword of `process_run` (the fields of
 
 | Keyword | Default | Meaning |
 |---------|---------|---------|
-| `upstream_pressure_torr` | measured | P_up in Φ: the upstream Baratron mean over the steady-state window; a number overrides it |
+| `upstream_pressure_torr` | measured | P_up in Φ: the upstream Baratron mean over the steady-state window minus its pre-start bias (median of the last 60 s before the step); a number overrides it |
 | `analysis_hours` | 30 | analyse the first N h after `t_init` (None = whole run) |
 | `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
 | `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |

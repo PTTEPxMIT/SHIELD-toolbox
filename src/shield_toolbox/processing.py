@@ -44,6 +44,7 @@ from shield_toolbox.analysis import (
     permeability_takaishi_sensui,
     run_window_mask,
     solubility_from_permeability,
+    upstream_zero,
 )
 from shield_toolbox.analysis.time_lag import (
     NOISE_MARGIN_FRACTION,
@@ -121,7 +122,7 @@ class TimeLagSettings:
 
     upstream_pressure_torr: float | None = None
     """Upstream pressure used in Φ, Torr. None: the measured mean over the
-    steady-state window."""
+    steady-state window minus the gauge's pre-start bias."""
     analysis_hours: float | None = 30.0
     """Only the first this many hours after ``t_init`` are analysed. None:
     the whole run."""
@@ -184,7 +185,11 @@ class ProcessedRun:
     upstream_pressure_torr: float
     """Upstream pressure used in Φ."""
     upstream_pressure_measured_torr: float
-    """Mean measured upstream pressure over the steady-state window."""
+    """Mean upstream pressure over the steady-state window, pre-start bias
+    subtracted."""
+    upstream_bias_torr: float | None
+    """Upstream reading before the step (gauge zero offset), subtracted
+    from the measured upstream; None if the recording starts pressurised."""
     downstream_pressure_torr: float
     """Last raw downstream pressure in the steady-state window (where the
     Takaishi–Sensui correction is evaluated)."""
@@ -281,6 +286,7 @@ class ProcessedRun:
                 },
                 "upstream_pressure_torr": self.upstream_pressure_torr,
                 "upstream_pressure_measured_torr": self.upstream_pressure_measured_torr,
+                "upstream_bias_torr": self.upstream_bias_torr,
                 "downstream_pressure_torr": self.downstream_pressure_torr,
                 "permeability": {
                     **_ufloat_dict(self.permeability),
@@ -594,7 +600,10 @@ def _analyse(
     temperature_K, temperature_source = _window_temperature(
         ts["temperature_K"].to_numpy()[steady.used], rig, furnace_setpoint, run_id
     )
-    upstream_measured = float(np.mean(upstream_torr[steady.used]))
+    upstream_bias = upstream_zero(t_rel, upstream_torr)
+    upstream_measured = float(np.mean(upstream_torr[steady.used])) - (
+        upstream_bias or 0.0
+    )
     upstream_used = (
         upstream_measured
         if settings.upstream_pressure_torr is None
@@ -639,6 +648,7 @@ def _analyse(
         temperature_source=temperature_source,
         upstream_pressure_torr=upstream_used,
         upstream_pressure_measured_torr=upstream_measured,
+        upstream_bias_torr=upstream_bias,
         downstream_pressure_torr=downstream_last,
         permeability=permeability,
         time_lag_s=time_lag_s,

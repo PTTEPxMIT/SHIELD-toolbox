@@ -42,6 +42,8 @@ from uncertainties import UFloat, ufloat
 PRESSURISED_TORR = 10.0
 """Upstream readings above this count as pressurised (plateau and dropout
 detection)."""
+UPSTREAM_ZERO_WINDOW_S = 60.0
+"""The upstream pre-start bias is the median over this long before the step."""
 NOISE_START_S = 60.0
 """The noise recording starts this long after ``t_init``, skipping the jump
 the valve opening puts on the downstream gauge."""
@@ -82,6 +84,32 @@ def initial_time(time_s: npt.ArrayLike, upstream_torr: npt.ArrayLike) -> float:
         )
     plateau = np.median(upstream[pressurised])
     return float(time_arr[np.nonzero(upstream > 0.5 * plateau)[0][0]])
+
+
+def upstream_zero(
+    time_since_init_s: npt.ArrayLike,
+    upstream_torr: npt.ArrayLike,
+    window_s: float = UPSTREAM_ZERO_WINDOW_S,
+) -> float | None:
+    """Pre-start bias of the upstream gauge: its reading before the step.
+
+    The median of the samples in the last ``window_s`` before ``t_init``
+    that are still below ``PRESSURISED_TORR`` (so the step itself, and any
+    re-zeroing earlier in the recording, are left out). Subtracted from the
+    measured upstream pressure, as the background level is from the
+    downstream.
+
+    Returns:
+        The bias in Torr, or None when the recording has no samples before
+        the step.
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    upstream = np.asarray(upstream_torr, dtype=float)
+    before = (t_rel < 0) & (upstream < PRESSURISED_TORR)
+    if not before.any():
+        return None
+    last = before & (t_rel >= t_rel[before][-1] - window_s)
+    return float(np.median(upstream[last]))
 
 
 def rise_onset(

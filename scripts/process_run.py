@@ -112,7 +112,8 @@ def main() -> None:
         )
         print(
             f"  P_up            : {processed.upstream_pressure_torr:.1f} Torr used, "
-            f"{processed.upstream_pressure_measured_torr:.1f} Torr measured"
+            f"{processed.upstream_pressure_measured_torr:.1f} Torr measured "
+            f"(pre-start bias {processed.upstream_bias_torr or 0:.2f} Torr removed)"
         )
         print(f"  permeability    : {processed.permeability:.2uP} H/(m·s·Pa^0.5)")
         if processed.time_lag_s is not None:

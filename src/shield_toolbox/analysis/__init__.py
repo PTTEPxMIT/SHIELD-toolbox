@@ -24,6 +24,7 @@ from shield_toolbox.analysis.time_lag import (
     initial_time,
     rise_onset,
     solubility_from_permeability,
+    upstream_zero,
 )
 from shield_toolbox.analysis.window import downstream_window_mask, run_window_mask
 
@@ -50,4 +51,5 @@ __all__ = [
     "run_window_mask",
     "solubility_from_permeability",
     "takaishi_sensui_ratio",
+    "upstream_zero",
 ]
