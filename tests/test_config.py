@@ -42,10 +42,26 @@ def test_get_rig_config_for_date_selects_v1():
     assert get_rig_config_for_date(date(2026, 1, 1)) is SHIELD_V1
 
 
+def test_v2_rebuilt_rig_values():
+    assert not SHIELD_V2.is_draft
+    assert SHIELD_V2.valid_from == date(2026, 9, 16)
+    assert SHIELD_V2.downstream_volume_m3.nominal_value == pytest.approx(7.09e-5)
+    assert SHIELD_V2.downstream_volume_m3.std_dev == pytest.approx(6.45e-6)
+    assert SHIELD_V2.sample_diameter_m == pytest.approx(0.014)
+    assert SHIELD_V2.sample_area_m2 == pytest.approx(0.25 * math.pi * 0.014**2)
+
+
+def test_get_rig_config_for_date_switches_to_v2_on_rebuild():
+    assert get_rig_config_for_date(date(2026, 9, 15)) is SHIELD_V1
+    assert get_rig_config_for_date(date(2026, 9, 16)) is SHIELD_V2
+    assert get_rig_config_for_date(date(2100, 1, 1)) is SHIELD_V2
+
+
 def test_drafts_never_selected_by_date():
-    assert SHIELD_V2.is_draft
-    # Far-future date still resolves to the latest non-draft config.
-    assert get_rig_config_for_date(date(2100, 1, 1)) is SHIELD_V1
+    draft = dataclasses.replace(SHIELD_V2, version="v3", valid_from=None)
+    assert draft.is_draft
+    # A draft is invisible to date resolution even though it is the newest.
+    assert get_rig_config_for_date(date(2100, 1, 1)) is SHIELD_V2
 
 
 def test_date_before_any_config_raises():
