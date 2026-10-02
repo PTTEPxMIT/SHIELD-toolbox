@@ -7,6 +7,11 @@ from shield_toolbox.analysis.leak import (
     fit_leak_rate,
     leak_molar_rate_mol_per_s,
 )
+from shield_toolbox.analysis.legacy import (
+    TailAsymptoteFit,
+    fit_tail_asymptote,
+    tail_mean,
+)
 from shield_toolbox.analysis.steady_state import (
     ArrheniusFit,
     fit_arrhenius,
@@ -35,6 +40,7 @@ __all__ = [
     "LeakRateFit",
     "NoiseRecording",
     "SteadyStateFit",
+    "TailAsymptoteFit",
     "diffusivity_from_time_lag",
     "downstream_window_mask",
     "find_noise_recording",
@@ -43,6 +49,7 @@ __all__ = [
     "fit_evacuation",
     "fit_leak_rate",
     "fit_steady_state",
+    "fit_tail_asymptote",
     "furnace_temperature_offset",
     "initial_time",
     "leak_molar_rate_mol_per_s",
@@ -50,6 +57,7 @@ __all__ = [
     "rise_onset",
     "run_window_mask",
     "solubility_from_permeability",
+    "tail_mean",
     "takaishi_sensui_ratio",
     "upstream_zero",
 ]

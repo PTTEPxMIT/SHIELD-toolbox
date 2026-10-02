@@ -225,6 +225,39 @@ uv run python scripts/process_run.py 26.09.25_run_1_17h59 26.09.28_run_1_18h50 \
     --save-plots figures
 ```
 
+## Legacy method for original-rig runs
+
+Runs on the original (v1) rig were analysed with the method of
+`SHIELD_analysis.ipynb` (`ShieldRunsAnalysis`). `process_legacy_run`
+reproduces it:
+
+- an unweighted straight line through the last 25 % of the downstream
+  samples between 0.05 and 0.95 Torr gives the rise slope;
+- τ is where that line crosses P = 0, measured from the first sample of the
+  recording; D = e²/(6τ);
+- upstream pressure and sample temperature are means over the last 75 % of
+  the recording (setpoint − 18 K for runs without a thermocouple).
+
+Φ uses the corrected Takaishi–Sensui formula with the rig constants, not the
+notebook's original formula (which dropped the hot downstream volume), so Φ
+is 10–25 % above the old notebook's values; τ and D match them exactly. Old
+runs often carry no or a wrong sample thickness in their metadata, so pass
+it:
+
+```python
+from shield_toolbox import SampleInfo, fetch_run, process_legacy_run
+from shield_toolbox.plotting import plot_legacy_run
+
+sample = SampleInfo("316L steel", "none", thickness_m=0.65e-3)
+legacy = process_legacy_run(fetch_run("25.10.10_run_1_08h38"), sample)
+print(legacy.time_lag_s / 3600)  # 37.45 h
+print(legacy.diffusivity_m2_per_s)  # 5.22e-13 m²/s
+legacy.write("processed_runs")  # same layout; load_results reads it
+plot_legacy_run(legacy)  # upstream mean + downstream tail asymptote
+```
+
+`scripts/process_run.py --legacy` does the same from the command line.
+
 ## Leak tests
 
 A **leak test** (`run_type="leak_test"` in the DAS) is a short run recorded
