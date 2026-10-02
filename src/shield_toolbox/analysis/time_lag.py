@@ -284,6 +284,10 @@ def fit_steady_state(
         end_s: Window end, s after ``t_init``; defaults to the last usable
             sample.
         n_iter: Maximum number of iterations.
+
+    Raises:
+        ValueError: If the window holds too few usable samples to fit — the
+            run did not reach ``start_taus·τ_L`` before ``end_s``.
     """
     t_rel = np.asarray(time_since_init_s, dtype=float)
     p = np.asarray(filtered, dtype=float)
@@ -292,6 +296,13 @@ def fit_steady_state(
     tau = 0.25 * end_s  # first guess
     for _ in range(n_iter):
         window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
+        if window.sum() < 4:
+            raise ValueError(
+                f"Steady-state window from {start_taus:g}·τ_L = "
+                f"{start_taus * tau / 3600:.2f} h to {end_s / 3600:.2f} h after "
+                "t_init holds too few usable samples — the run did not reach "
+                "steady state"
+            )
         (slope, intercept), cov = np.polyfit(t_rel[window], p[window], 1, cov=True)
         new_tau = -intercept / slope
         if abs(new_tau - tau) < 1.0:

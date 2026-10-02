@@ -111,6 +111,13 @@ def test_steady_state_fit_respects_window_end_and_usable_mask():
     assert t_rel[fit.used][0] == pytest.approx(2 * fit.time_lag_s, abs=5.0)
 
 
+def test_steady_state_fit_raises_when_window_is_past_the_data():
+    t_rel = np.arange(0.0, 3000.0, 5.0)
+    filtered = _fickian_rise(t_rel, 2000.0, 1e-2)  # 3 τ_L is past the end
+    with pytest.raises(ValueError, match="did not reach steady state"):
+        fit_steady_state(t_rel, filtered, np.ones_like(t_rel, dtype=bool))
+
+
 def test_diffusivity_from_time_lag():
     # D = e²/(6τ) with e = 0.88 mm, τ = 1290.7 s → 1e-10 m²/s.
     tau = THICKNESS_M**2 / (6 * 1e-10)
