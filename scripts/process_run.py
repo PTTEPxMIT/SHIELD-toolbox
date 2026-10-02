@@ -1,17 +1,18 @@
-"""Process one or more recorded SHIELD runs end to end.
+"""Process one or more recorded SHIELD runs with the background-subtracted
+time-lag method.
 
-For each run directory this script loads the raw data, processes it
-(pressure calibration, run-window trimming, upstream plateau, downstream
-rise fit, Takaishi–Sensui permeability), writes the processed artifact
-(``timeseries.parquet`` + ``result.json``) under
-``<output>/<substrate>/<coating>/<run_id>/``, and produces an overview
-figure of upstream/downstream pressure with the fits.
+Each run is given as a SHIELD-Data run ID (fetched via ``shield_data``) or a
+local run directory. For each run the script finds ``t_init`` (upstream
+step), the noise recording before the downstream rise, fits and subtracts
+the background line, fits the steady-state line from 3 τ_L, and derives
+permeability (Takaishi–Sensui), diffusivity and solubility. It writes the
+processed artifact (``timeseries.parquet`` + ``result.json``) under
+``<output>/<substrate>/<coating>/<run_id>/`` and draws the four-step overview.
 
 Example::
 
     uv run python scripts/process_run.py \\
-        ../SHIELD-Data/run_data/25.10.06_run_1_10h41 \\
-        --substrate 316L --coating uncoated --thickness-mm 0.88 --show
+        26.09.25_run_1_17h59 26.09.28_run_1_18h50 --upstream-torr 500 --show
 """
 
 from __future__ import annotations
@@ -21,20 +22,38 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from shield_toolbox import load_run
+from shield_toolbox import fetch_run, load_run, process_run
 from shield_toolbox.plotting import plot_run_overview
-from shield_toolbox.processing import SampleInfo, process_run
+from shield_toolbox.processing import SampleInfo
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("run_dirs", nargs="+", type=Path, help="Run directories")
-    parser.add_argument("--substrate", required=True, help="Substrate material")
-    parser.add_argument("--coating", default="uncoated", help="Coating material")
     parser.add_argument(
-        "--thickness-mm", type=float, default=0.88, help="Sample thickness (mm)"
+        "runs", nargs="+", help="SHIELD-Data run IDs or local run directories"
     )
-    parser.add_argument("--sample-id", default=None, help="Optional sample ID")
+    parser.add_argument(
+        "--upstream-torr",
+        type=float,
+        default=None,
+        help="Upstream pressure used in Φ (default: measured mean over the "
+        "steady-state window)",
+    )
+    parser.add_argument(
+        "--analysis-hours",
+        type=float,
+        default=30.0,
+        help="Analyse only this many hours after t_init (default: 30; 0 = all)",
+    )
+    parser.add_argument(
+        "--substrate",
+        default=None,
+        help="Override the sample substrate (default: from the run metadata)",
+    )
+    parser.add_argument("--coating", default="uncoated", help="With --substrate")
+    parser.add_argument(
+        "--thickness-mm", type=float, default=0.88, help="With --substrate"
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -46,48 +65,67 @@ def main() -> None:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Also save the overview figure of each run as a PNG in DIR",
+        help="Also save each run's overview figure as a PNG in DIR",
     )
     parser.add_argument(
         "--show", action="store_true", help="Show the figures interactively"
     )
     args = parser.parse_args()
 
-    sample = SampleInfo(
-        substrate=args.substrate,
-        coating=args.coating,
-        thickness_m=args.thickness_mm * 1e-3,
-        sample_id=args.sample_id,
-    )
+    sample = None
+    if args.substrate is not None:
+        sample = SampleInfo(
+            substrate=args.substrate,
+            coating=args.coating,
+            thickness_m=args.thickness_mm * 1e-3,
+        )
 
-    for run_dir in args.run_dirs:
-        run = load_run(run_dir)
-        processed = process_run(run, sample)
+    for run_ref in args.runs:
+        run = load_run(run_ref) if Path(run_ref).is_dir() else fetch_run(run_ref)
+        processed = process_run(
+            run,
+            sample,
+            upstream_pressure_torr=args.upstream_torr,
+            analysis_hours=args.analysis_hours or None,
+        )
         out_dir = processed.write(args.output)
 
-        results = processed.result_dict()["results"]
-        perm = processed.permeability
+        noise = processed.noise
+        start_s, end_s = processed.steady_state_window_s
         print(f"{run.run_id}:")
+        print(f"  t_init          : {processed.initial_time_s:.0f} s")
         print(
-            f"  temperature    : {processed.sample_temperature_K:.1f} K "
+            f"  noise recording : {noise.start_s / 60:g}–{noise.end_s / 60:.3g} min "
+            f"(onset {noise.onset_s / 60:.1f} min, {noise.onset_from})"
+        )
+        print(f"  background b    : {processed.background.slope:.2uP} Pa/s")
+        print(
+            f"  S∞              : {processed.steady_state.slope:.3e} Pa/s "
+            f"(window {start_s / 3600:.1f}–{end_s / 3600:.1f} h)"
+        )
+        print(
+            f"  temperature     : {processed.sample_temperature_K:.1f} K "
             f"({processed.temperature_source})"
         )
-        print(f"  P_up plateau   : {results['upstream_pressure_torr']:.2f} Torr")
         print(
-            f"  dP_down/dt     : {results['downstream_rise_torr_per_s']:.3e} Torr/s "
-            f"({results['n_fit_samples']} samples in fit)"
+            f"  P_up            : {processed.upstream_pressure_torr:.1f} Torr used, "
+            f"{processed.upstream_pressure_measured_torr:.1f} Torr measured"
         )
-        print(f"  permeability   : {perm:.2e} H/(m·s·Pa^0.5)")
-        print(f"  written to     : {out_dir}")
+        print(f"  permeability    : {processed.permeability:.2uP} H/(m·s·Pa^0.5)")
+        if processed.time_lag_s is not None:
+            print(f"  τ_L             : {processed.time_lag_s / 3600:.2f} h")
+            print(f"  diffusivity     : {processed.diffusivity_m2_per_s:.2e} m²/s")
+            print(f"  solubility      : {processed.solubility:.2uP} H/(m³·Pa^0.5)")
+        print(f"  written to      : {out_dir}")
 
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+        fig, axes = plt.subplots(2, 2, figsize=(13, 8.5))
         plot_run_overview(processed, axes=axes)
         fig.tight_layout()
         if args.save_plots:
             args.save_plots.mkdir(parents=True, exist_ok=True)
             fig_path = args.save_plots / f"{processed.run_id}.png"
             fig.savefig(fig_path, dpi=150)
-            print(f"  figure         : {fig_path}")
+            print(f"  figure          : {fig_path}")
 
     if args.show:
         plt.show()

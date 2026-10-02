@@ -1,7 +1,8 @@
 # SHIELD-toolbox
 
 `shield_toolbox` is the analysis package for the SHIELD hydrogen gas-driven
-permeation rig. It processes recorded runs with the time-lag method to extract
+permeation rig. It processes recorded runs with the background-subtracted
+time-lag method to extract
 permeability, diffusivity, and solubility of fusion-relevant materials and
 coatings.
 
@@ -45,6 +46,11 @@ One of three sibling repos, cloned side-by-side, deliberately separate
   `load_run(path) → PermeationRun`; `PermeationRun` is the central container
   and holds no analysis logic.
 - `analysis/` — pure physics functions: no file I/O, no plotting.
+  `analysis/time_lag.py` holds the run-processing method (t_init, noise
+  recording, background fit, iterated steady-state fit from 3 τ_L);
+  `processing.py` wires it into `process_run` (settings = `TimeLagSettings`).
+  Leak tests (`process_leak_test`) are a standalone measurement — never
+  paired with or subtracted from permeation runs.
 - `plotting/` — matplotlib only; every function accepts/returns `ax` and never
   calls `plt.show()` or `savefig` (saving is the caller's job).
 - Uncertainties propagate via the `uncertainties` package (`ufloat`) in
@@ -66,8 +72,10 @@ One of three sibling repos, cloned side-by-side, deliberately separate
 
 ## Physics cheat-sheet (context — don't re-derive)
 
-- Time lag τ from the x-intercept of the downstream pressure tail asymptote;
-  diffusivity D = e²/(6τ) for sample thickness e.
+- Background-subtracted time lag: fit a line to the downstream noise
+  recording (after `t_init`, before the rise onset), subtract it, fit the
+  steady-state line from 3 τ_L; its zero crossing after `t_init` is τ_L.
+  Diffusivity D = e²/(6τ_L) for sample thickness e.
 - Steady-state flux J = (dP/dt)·V/(R·T·A)·N_A (V = downstream volume,
   A = sample area).
 - Permeability Φ = J·e/√P_up (thermal-transpiration corrected variants:

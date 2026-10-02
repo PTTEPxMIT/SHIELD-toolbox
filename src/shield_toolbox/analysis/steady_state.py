@@ -1,12 +1,9 @@
-"""Steady-state permeation analysis: upstream plateau, downstream rise fit,
-Takaishi–Sensui permeability, and Arrhenius fitting.
+"""Steady-state permeability with the Takaishi–Sensui correction, and
+Arrhenius fitting.
 
-The plateau and rise-fit algorithms are ported unchanged from
-``shield_das.analysis`` (which the live DAS uses), so results stay comparable.
 Rig constants come from :class:`~shield_toolbox.config.RigConfig` instead of
-being hard-coded, and the Torr→Pa factor is 133.322 rather than the legacy
-133.3 (<0.02 % effect). The Takaishi–Sensui permeability deliberately departs
-from the legacy code, which dropped the heated downstream volume and used
+being hard-coded. The Takaishi–Sensui permeability deliberately departs from
+the legacy code, which dropped the heated downstream volume and used
 mis-scaled constants (see :func:`permeability_takaishi_sensui`). Pure physics
 only: no file I/O, no plotting.
 """
@@ -21,117 +18,6 @@ from uncertainties import UFloat
 
 from shield_toolbox.config import RigConfig
 from shield_toolbox.constants import N_A, TORR_TO_PA, TS_A_H2, TS_B_H2, TS_C_H2, R
-
-
-@dataclass(frozen=True)
-class UpstreamPlateau:
-    """Stable upstream pressure after the fill transient."""
-
-    average_torr: float
-    start_index: int
-    """Index of the first sample of the stable region."""
-
-
-def stable_upstream_pressure(
-    time_s: npt.ArrayLike,
-    pressure_torr: npt.ArrayLike,
-    window: int = 5,
-    slope_threshold_torr_per_s: float = 1e-3,
-) -> UpstreamPlateau:
-    """Detect when the upstream pressure stabilises after the fill and return
-    the average stable pressure.
-
-    Slopes are smoothed with a moving average; the stable region starts at the
-    first sample where the absolute smoothed slope falls below the threshold,
-    at least 5 s after the start. Falls back to the second half of the data if
-    no stable region is found.
-
-    Args:
-        time_s: Time axis in seconds.
-        pressure_torr: Upstream pressure in Torr.
-        window: Moving-average window (samples) for slope smoothing.
-        slope_threshold_torr_per_s: Maximum |slope| considered stable.
-    """
-    time_arr = np.asarray(time_s, dtype=float)
-    pressure_arr = np.asarray(pressure_torr, dtype=float)
-
-    slopes = np.gradient(pressure_arr, time_arr)
-    # Cap the kernel at the trace length: np.convolve(mode="same") returns
-    # max(len, window) values, which breaks masking for very short traces.
-    effective_window = min(window, len(pressure_arr))
-    kernel = np.ones(effective_window) / effective_window
-    smoothed = np.convolve(slopes, kernel, mode="same")
-
-    is_stable = np.abs(smoothed) < slope_threshold_torr_per_s
-    after_settling = time_arr > time_arr.min() + 5
-    stability_mask = is_stable & after_settling
-
-    if stability_mask.any():
-        start = int(np.argmax(stability_mask))
-    else:
-        start = len(time_arr) // 2
-
-    return UpstreamPlateau(
-        average_torr=float(np.mean(pressure_arr[start:])),
-        start_index=start,
-    )
-
-
-@dataclass(frozen=True)
-class DownstreamFit:
-    """Weighted linear fit to the downstream pressure rise."""
-
-    slope_torr_per_s: float
-    intercept_torr: float
-    used: np.ndarray
-    """Boolean mask of the input samples that entered the fit."""
-
-    def evaluate(self, time_s: npt.ArrayLike) -> np.ndarray:
-        """The fitted line P(t) = slope·t + intercept, in Torr."""
-        return (
-            self.slope_torr_per_s * np.asarray(time_s, dtype=float)
-            + self.intercept_torr
-        )
-
-
-def fit_downstream_rise(
-    time_s: npt.ArrayLike,
-    pressure_torr: npt.ArrayLike,
-    min_reliable_torr: float = 0.05,
-    max_reliable_torr: float = 0.95,
-) -> DownstreamFit:
-    """Fit the downstream pressure rise; the slope is the permeation signal.
-
-    Samples outside the gauge's reliable range (0.05–0.95 Torr for the 1 Torr
-    Baratron) are excluded. Exponential weights from exp(-1) to exp(0)
-    emphasise later, more stable samples.
-
-    Args:
-        time_s: Time axis in seconds.
-        pressure_torr: Downstream pressure in Torr.
-        min_reliable_torr: Lower edge of the reliable gauge range.
-        max_reliable_torr: Upper edge of the reliable gauge range.
-
-    Raises:
-        ValueError: If fewer than two samples are inside the reliable range.
-    """
-    time_arr = np.asarray(time_s, dtype=float)
-    pressure_arr = np.asarray(pressure_torr, dtype=float)
-
-    used = (pressure_arr >= min_reliable_torr) & (pressure_arr <= max_reliable_torr)
-    if used.sum() < 2:
-        raise ValueError(
-            f"Only {int(used.sum())} downstream samples inside the reliable "
-            f"range [{min_reliable_torr}, {max_reliable_torr}] Torr — cannot fit"
-        )
-
-    weights = np.exp(np.linspace(-1, 0, int(used.sum())))
-    slope, intercept = np.polyfit(time_arr[used], pressure_arr[used], 1, w=weights)
-    return DownstreamFit(
-        slope_torr_per_s=float(slope),
-        intercept_torr=float(intercept),
-        used=used,
-    )
 
 
 def takaishi_sensui_ratio(
@@ -209,8 +95,8 @@ def permeability_takaishi_sensui(
         temperature_K: Sample temperature in K.
         sample_thickness_m: Sample thickness in m.
         downstream_pressure_torr: Downstream pressure the correction is
-            evaluated at (the final one), in Torr.
-        upstream_pressure_torr: Stable upstream pressure in Torr.
+            evaluated at (the last one in the steady-state window), in Torr.
+        upstream_pressure_torr: Upstream pressure in Torr.
         rig: Rig configuration providing downstream volume (with
             uncertainty), hot-side fraction, sample area, ambient temperature,
             and the connecting-tube diameter (the sample fitting diameter, as

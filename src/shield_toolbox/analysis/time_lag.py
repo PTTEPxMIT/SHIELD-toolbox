@@ -1,65 +1,305 @@
-"""Time-lag extraction of diffusivity and solubility.
+"""Background-subtracted time-lag method.
 
-The classic permeation time-lag method (Daynes/Barrer): once permeation
-reaches steady state, the downstream pressure rises linearly. Extrapolating
-that steady-state line back to the pre-breakthrough baseline pressure gives
-the time-axis intercept; the *time lag* τ is that intercept measured from the
-moment upstream pressure was first applied to the sample (the loading valve
-opening). For a membrane of thickness e with Fickian diffusion::
+The classic permeation time-lag method (Daynes/Barrer), applied after the
+downstream background has been removed. The procedure, in four steps:
 
-    τ = e² / (6·D)      →      D = e² / (6·τ)         [m²/s]
-    S = Φ / D                                          [H/(m³·Pa^0.5)]
+1. **Noise recording.** Before hydrogen has crossed the sample, the sealed
+   downstream volume sees only the background: seal leakage plus outgassing.
+   That flat stretch after the upstream step is each run's noise recording.
+   It starts ``NOISE_START_S`` after ``t_init`` (skipping the small jump the
+   valve opening puts on the downstream gauge) and ends ``NOISE_MARGIN_S``
+   before the detected onset of the downstream rise (:func:`rise_onset`).
+2. **Initial time.** ``t_init`` is the moment the upstream pressure steps up:
+   the first sample above half its plateau (:func:`initial_time`).
+3. **Background fit.** A straight line ``P_bg = a + b·(t − t_init)`` is fitted
+   to the noise recording (:func:`fit_background`).
+4. **Time lag on filtered data.** Subtracting the background line gives the
+   filtered signal, which is 0 at ``t_init``. The steady-state line
+   ``S∞·(t − t_init − τ_L)`` is fitted from ``start_taus·τ_L`` to the end of
+   usable data, iterating τ_L and the window start until they agree
+   (:func:`fit_steady_state`). By 3 τ_L the flux is within 1.5 % of steady
+   state.
 
-so one run yields permeability Φ (from the slope), diffusivity D (from the
-intercept), and solubility S (their ratio).
+For a membrane of thickness e with Fickian diffusion::
 
+    τ_L = e² / (6·D)      →      D = e² / (6·τ_L)        [m²/s]
+    S = Φ / D                                            [H/(m³·Pa^0.5)]
+
+Pressures are in Pa and times in seconds since ``t_init`` unless stated.
 Pure physics only: no file I/O, no plotting. ``process_run`` wires these into
-the standard pipeline and stores the results in ``result.json``.
+the standard pipeline.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
-from uncertainties import UFloat
+import numpy.typing as npt
+from uncertainties import UFloat, ufloat
 
-from shield_toolbox.analysis.steady_state import DownstreamFit
+PRESSURISED_TORR = 10.0
+"""Upstream readings above this count as pressurised (plateau and dropout
+detection)."""
+NOISE_START_S = 60.0
+"""The noise recording starts this long after ``t_init``, skipping the jump
+the valve opening puts on the downstream gauge."""
+NOISE_MARGIN_S = 600.0
+"""The noise recording ends this long before the detected rise onset."""
+ONSET_SIGMA = 5.0
+"""A block counts as the rise onset when its mean sits more than this many
+standard errors above the background line fitted before it."""
+ONSET_BLOCK_S = 600.0
+"""Block length of the onset search."""
+FINE_ONSET_BLOCK_S = 60.0
+"""Block length of the second onset search, for rises that start within
+minutes (high temperature)."""
+ONSET_SEARCH_S = 6 * 3600.0
+"""The onset search gives up this long after ``t_init``."""
+SS_START_TAUS = 3.0
+"""The steady-state window starts at this many time lags after ``t_init``."""
 
 
-def time_lag_from_fit(
-    fit: DownstreamFit,
-    baseline_torr: float,
-    permeation_start_s: float,
-) -> float:
-    """Time lag τ (s) from the steady-state downstream fit.
+def initial_time(time_s: npt.ArrayLike, upstream_torr: npt.ArrayLike) -> float:
+    """``t_init``: the first time the upstream passes half its plateau.
 
-    The fitted line P(t) = slope·t + intercept (t in the run's time axis)
-    crosses the baseline pressure at t₀ = (baseline − intercept)/slope; the
-    time lag is t₀ minus the moment permeation started.
+    The plateau is the median of the pressurised samples (above
+    ``PRESSURISED_TORR``).
 
     Args:
-        fit: Steady-state downstream rise fit
-            (:func:`~shield_toolbox.analysis.steady_state.fit_downstream_rise`).
-        baseline_torr: Downstream pressure before breakthrough, in Torr.
-        permeation_start_s: When upstream pressure was applied to the sample
-            (normally the loading-valve opening, e.g. ``v3_open_time``), on
-            the same time axis as the fit.
-
-    Returns:
-        τ in seconds. Can be non-positive for degenerate inputs (e.g. a
-        baseline above the fitted line at the start time) — validate with
-        ``τ > 0`` before deriving a diffusivity.
+        time_s: Time axis in seconds.
+        upstream_torr: Upstream pressure in Torr.
 
     Raises:
-        ValueError: If the fitted slope is not positive (no rising signal —
-            the time-axis crossing is undefined).
+        ValueError: If the upstream is never pressurised.
     """
-    if not fit.slope_torr_per_s > 0:
+    time_arr = np.asarray(time_s, dtype=float)
+    upstream = np.asarray(upstream_torr, dtype=float)
+    pressurised = upstream > PRESSURISED_TORR
+    if not pressurised.any():
         raise ValueError(
-            f"Downstream fit slope is {fit.slope_torr_per_s:.3e} Torr/s; "
-            "the time-lag intercept needs a rising steady-state signal"
+            f"Upstream never rises above {PRESSURISED_TORR} Torr — no pressure step"
         )
-    crossing_s = (baseline_torr - fit.intercept_torr) / fit.slope_torr_per_s
-    return float(crossing_s - permeation_start_s)
+    plateau = np.median(upstream[pressurised])
+    return float(time_arr[np.nonzero(upstream > 0.5 * plateau)[0][0]])
+
+
+def rise_onset(
+    time_since_init_s: npt.ArrayLike,
+    pressure: npt.ArrayLike,
+    start_s: float = NOISE_START_S,
+    block_s: float = ONSET_BLOCK_S,
+    n_sigma: float = ONSET_SIGMA,
+    max_s: float = ONSET_SEARCH_S,
+) -> tuple[float, float]:
+    """Onset of the downstream rise, and the noise level before it.
+
+    Starting at ``start_s``, the downstream is averaged in ``block_s`` blocks.
+    A straight line is fitted to all the data before each block and extended
+    across it. The onset is the start of the first block whose mean sits more
+    than ``n_sigma`` standard errors above that line. The first three blocks
+    (at most 30 min) only seed the background line.
+
+    Args:
+        time_since_init_s: Time since ``t_init``, s.
+        pressure: Downstream pressure (any unit; Pa in ``process_run``).
+        start_s: Start of the search, s after ``t_init``.
+        block_s: Block length, s.
+        n_sigma: Detection threshold in standard errors of the block mean.
+        max_s: End of the search, s after ``t_init``.
+
+    Returns:
+        ``(onset_s, noise_sd)``: the onset in s after ``t_init``, and the
+        standard deviation of the seed stretch about its linear fit (same
+        unit as ``pressure``).
+
+    Raises:
+        ValueError: If no block departs from the background before ``max_s``.
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    p = np.asarray(pressure, dtype=float)
+    first = (t_rel >= start_s) & (t_rel < start_s + min(1800, 3 * block_s))
+    noise_sd = np.std(
+        p[first] - np.polyval(np.polyfit(t_rel[first], p[first], 1), t_rel[first])
+    )
+    for lo in np.arange(start_s, max_s, block_s)[3:]:
+        before = (t_rel >= start_s) & (t_rel < lo)
+        block = (t_rel >= lo) & (t_rel < lo + block_s)
+        if not block.any():
+            break
+        b, a = np.polyfit(t_rel[before], p[before], 1)
+        resid = p[block].mean() - (a + b * t_rel[block].mean())
+        if resid > n_sigma * noise_sd / np.sqrt(block.sum()):
+            return float(lo), float(noise_sd)
+    raise ValueError(
+        f"No downstream rise onset found within {max_s / 3600:g} h of t_init"
+    )
+
+
+@dataclass(frozen=True)
+class NoiseRecording:
+    """The stretch of downstream signal used as the background (step 1)."""
+
+    start_s: float
+    """Start, s after ``t_init``."""
+    end_s: float
+    """End, s after ``t_init``."""
+    onset_s: float
+    """Detected onset of the downstream rise, s after ``t_init``."""
+    onset_from: str
+    """``"10 min blocks"``, ``"1 min blocks"`` or ``"manual"``."""
+    noise_sd: float
+    """Noise level before the onset (unit of the pressure searched)."""
+    used: np.ndarray
+    """Boolean mask of the samples inside the noise recording."""
+
+
+def find_noise_recording(
+    time_since_init_s: npt.ArrayLike,
+    pressure: npt.ArrayLike,
+    start_s: float = NOISE_START_S,
+    margin_s: float = NOISE_MARGIN_S,
+    n_sigma: float = ONSET_SIGMA,
+    end_s: float | None = None,
+) -> NoiseRecording:
+    """Find the noise recording: from ``start_s`` to ``margin_s`` before the
+    rise onset.
+
+    The onset comes from 10 min blocks (:func:`rise_onset`). At high
+    temperature the rise can start within minutes, before the 10 min blocks
+    can resolve it, so the search is repeated with 1 min blocks. If that
+    finds the rise inside the 10-min-based noise window, the 1 min onset is
+    used instead, and the noise recording then ends a quarter of the onset
+    time before it (at least 1 min).
+
+    Args:
+        time_since_init_s: Time since ``t_init``, s.
+        pressure: Downstream pressure (Pa in ``process_run``).
+        start_s: Start of the noise recording, s after ``t_init``.
+        margin_s: Gap between the end of the noise recording and the
+            10-min-block onset, s.
+        n_sigma: Onset detection threshold (standard errors).
+        end_s: Manual end of the noise recording, s after ``t_init``;
+            overrides the detected one (the onset is still reported).
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    p = np.asarray(pressure, dtype=float)
+    onset_s, noise_sd = rise_onset(t_rel, p, start_s=start_s, n_sigma=n_sigma)
+    onset_from = "10 min blocks"
+    fine_onset_s, fine_sd = rise_onset(
+        t_rel, p, start_s=start_s, block_s=FINE_ONSET_BLOCK_S, n_sigma=n_sigma
+    )
+    if fine_onset_s < onset_s - margin_s:
+        # rise already under way inside the 10-min-based window
+        onset_s, noise_sd, onset_from = fine_onset_s, fine_sd, "1 min blocks"
+        margin_s = max(60.0, 0.25 * onset_s)
+    if end_s is None:
+        end_s = onset_s - margin_s
+    else:
+        onset_from = "manual"
+    return NoiseRecording(
+        start_s=float(start_s),
+        end_s=float(end_s),
+        onset_s=float(onset_s),
+        onset_from=onset_from,
+        noise_sd=float(noise_sd),
+        used=(t_rel >= start_s) & (t_rel <= end_s),
+    )
+
+
+@dataclass(frozen=True)
+class BackgroundFit:
+    """Background line ``P_bg = a + b·(t − t_init)`` (step 3)."""
+
+    level: UFloat
+    """``a``: the background extended back to ``t_init``."""
+    slope: UFloat
+    """``b``: the background rate (pressure unit per s)."""
+
+    def evaluate(self, time_since_init_s: npt.ArrayLike) -> np.ndarray:
+        """Nominal background at the given times since ``t_init``."""
+        t_rel = np.asarray(time_since_init_s, dtype=float)
+        return self.level.nominal_value + self.slope.nominal_value * t_rel
+
+
+def fit_background(
+    time_since_init_s: npt.ArrayLike,
+    pressure: npt.ArrayLike,
+    used: npt.ArrayLike,
+) -> BackgroundFit:
+    """Straight-line fit to the noise recording.
+
+    Args:
+        time_since_init_s: Time since ``t_init``, s.
+        pressure: Downstream pressure (Pa in ``process_run``).
+        used: Boolean mask of the noise recording.
+    """
+    mask = np.asarray(used, dtype=bool)
+    x = np.asarray(time_since_init_s, dtype=float)[mask]
+    y = np.asarray(pressure, dtype=float)[mask]
+    (b, a), cov = np.polyfit(x, y, 1, cov=True)
+    return BackgroundFit(
+        level=ufloat(a, np.sqrt(cov[1, 1])), slope=ufloat(b, np.sqrt(cov[0, 0]))
+    )
+
+
+@dataclass(frozen=True)
+class SteadyStateFit:
+    """Steady-state line ``S∞·(t − t_init − τ_L)`` on the filtered signal."""
+
+    slope: float
+    """``S∞``, filtered pressure unit per s."""
+    time_lag_s: float
+    """``τ_L``: the line's zero crossing, s after ``t_init``."""
+    used: np.ndarray
+    """Boolean mask of the samples inside the steady-state window."""
+    covariance: np.ndarray
+    """2×2 covariance of (slope, intercept) from the fit."""
+
+    def evaluate(self, time_since_init_s: npt.ArrayLike) -> np.ndarray:
+        """The steady-state line at the given times since ``t_init``."""
+        t_rel = np.asarray(time_since_init_s, dtype=float)
+        return self.slope * (t_rel - self.time_lag_s)
+
+
+def fit_steady_state(
+    time_since_init_s: npt.ArrayLike,
+    filtered: npt.ArrayLike,
+    usable: npt.ArrayLike,
+    start_taus: float = SS_START_TAUS,
+    end_s: float | None = None,
+    n_iter: int = 20,
+) -> SteadyStateFit:
+    """Fit the steady-state line from ``start_taus·τ_L`` to ``end_s``.
+
+    τ_L and the window start depend on each other, so they are iterated from
+    a first guess of a quarter of the span until τ_L moves by less than 1 s
+    (at most ``n_iter`` times; τ_L is floored at 60 s between iterations).
+
+    Args:
+        time_since_init_s: Time since ``t_init``, s.
+        filtered: Background-subtracted downstream pressure.
+        usable: Boolean mask of the samples that may enter the fit.
+        start_taus: Window start in units of τ_L.
+        end_s: Window end, s after ``t_init``; defaults to the last usable
+            sample.
+        n_iter: Maximum number of iterations.
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    p = np.asarray(filtered, dtype=float)
+    ok = np.asarray(usable, dtype=bool)
+    end_s = t_rel[ok][-1] if end_s is None else end_s
+    tau = 0.25 * end_s  # first guess
+    for _ in range(n_iter):
+        window = ok & (t_rel >= start_taus * tau) & (t_rel <= end_s)
+        (slope, intercept), cov = np.polyfit(t_rel[window], p[window], 1, cov=True)
+        new_tau = -intercept / slope
+        if abs(new_tau - tau) < 1.0:
+            break
+        tau = max(new_tau, 60.0)
+    return SteadyStateFit(
+        slope=float(slope), time_lag_s=float(new_tau), used=window, covariance=cov
+    )
 
 
 def diffusivity_from_time_lag(time_lag_s: float, sample_thickness_m: float) -> float:
@@ -95,34 +335,3 @@ def solubility_from_permeability(
             f"Diffusivity must be positive, got {diffusivity_m2_per_s:.3g} m²/s"
         )
     return permeability / diffusivity_m2_per_s
-
-
-def downstream_baseline_torr(
-    time_s: np.ndarray,
-    downstream_torr: np.ndarray,
-    permeation_start_s: float,
-    window_s: float = 30.0,
-) -> float:
-    """Downstream baseline pressure: the median over a short window after
-    permeation starts.
-
-    The median over ``[permeation_start_s, permeation_start_s + window_s]``
-    rejects single-sample spikes; before breakthrough (which takes at least
-    the time lag) the downstream pressure is flat, so the window only needs
-    to be short. Falls back to interpolating at ``permeation_start_s`` when
-    no samples fall inside the window.
-
-    Args:
-        time_s: Time axis in seconds.
-        downstream_torr: Downstream pressure in Torr, same length.
-        permeation_start_s: Start of the baseline window.
-        window_s: Window length in seconds.
-    """
-    time_arr = np.asarray(time_s, dtype=float)
-    pressure_arr = np.asarray(downstream_torr, dtype=float)
-    in_window = (time_arr >= permeation_start_s) & (
-        time_arr <= permeation_start_s + window_s
-    )
-    if in_window.any():
-        return float(np.median(pressure_arr[in_window]))
-    return float(np.interp(permeation_start_s, time_arr, pressure_arr))

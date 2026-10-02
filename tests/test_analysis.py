@@ -1,10 +1,9 @@
-"""Tests for shield_toolbox.analysis.
+"""Tests for shield_toolbox.analysis: run windows, Takaishi–Sensui
+permeability, and Arrhenius fits.
 
-Plateau and rise-fit parity values are pinned against ``shield_das.analysis``
-(the live DAS implementation) on synthetic data. The Takaishi–Sensui
-permeability deliberately departs from the legacy formula (which dropped the
-hot downstream volume), so it is tested against physical limits and an
-independent mole count instead.
+The Takaishi–Sensui permeability deliberately departs from the legacy formula
+(which dropped the hot downstream volume), so it is tested against physical
+limits and an independent mole count.
 """
 
 import dataclasses
@@ -17,24 +16,13 @@ from shield_toolbox import get_rig_config
 from shield_toolbox.analysis import (
     downstream_window_mask,
     fit_arrhenius,
-    fit_downstream_rise,
     permeability_takaishi_sensui,
     run_window_mask,
-    stable_upstream_pressure,
     takaishi_sensui_ratio,
 )
 from shield_toolbox.constants import N_A, TORR_TO_PA, R
 
 RIG = get_rig_config("v1")
-
-
-@pytest.fixture
-def synthetic_run():
-    """Step-and-plateau upstream, linear downstream rise (201 samples)."""
-    time_s = np.linspace(0, 1000, 201)
-    upstream_torr = np.where(time_s < 50, 8.0 * time_s, 400.0)
-    downstream_torr = 0.02 + 0.0008 * time_s
-    return time_s, upstream_torr, downstream_torr
 
 
 def test_run_window_all_true_when_never_saturated():
@@ -60,32 +48,6 @@ def test_downstream_window_ends_at_first_saturated_sample():
     np.testing.assert_array_equal(
         downstream_window_mask(voltage), [True, True, True, False, False, False]
     )
-
-
-def test_stable_upstream_pressure_parity(synthetic_run):
-    time_s, upstream_torr, _ = synthetic_run
-    plateau = stable_upstream_pressure(time_s, upstream_torr)
-    # Pinned against shield_das.average_pressure_after_increase.
-    assert plateau.average_torr == pytest.approx(400.0, rel=1e-12)
-    assert plateau.start_index > 0
-
-
-def test_fit_downstream_rise_parity(synthetic_run):
-    time_s, _, downstream_torr = synthetic_run
-    fit = fit_downstream_rise(time_s, downstream_torr)
-    # Pinned against shield_das.calculate_flux_from_sample.
-    assert fit.slope_torr_per_s == pytest.approx(0.0008, rel=1e-9)
-    # Only samples in [0.05, 0.95] Torr enter the fit.
-    assert fit.used.sum() < len(time_s)
-    inside = (downstream_torr >= 0.05) & (downstream_torr <= 0.95)
-    np.testing.assert_array_equal(fit.used, inside)
-    # The fitted line reproduces the underlying rise.
-    np.testing.assert_allclose(fit.evaluate([0.0, 1000.0]), [0.02, 0.82], atol=1e-6)
-
-
-def test_fit_downstream_rise_needs_reliable_samples():
-    with pytest.raises(ValueError, match="reliable"):
-        fit_downstream_rise([0.0, 1.0, 2.0], [1.5, 1.6, 1.7])
 
 
 def test_takaishi_sensui_ratio_limits():
@@ -175,16 +137,13 @@ def test_permeability_matches_mole_count_derivative():
         )
 
 
-def test_permeability_propagates_volume_uncertainty(synthetic_run):
-    time_s, upstream_torr, downstream_torr = synthetic_run
-    plateau = stable_upstream_pressure(time_s, upstream_torr)
-    fit = fit_downstream_rise(time_s, downstream_torr)
+def test_permeability_propagates_volume_uncertainty():
     perm = permeability_takaishi_sensui(
-        slope_torr_per_s=fit.slope_torr_per_s,
+        slope_torr_per_s=8e-4,
         temperature_K=500.0,
         sample_thickness_m=0.00088,
-        downstream_pressure_torr=float(downstream_torr[-1]),
-        upstream_pressure_torr=plateau.average_torr,
+        downstream_pressure_torr=0.82,
+        upstream_pressure_torr=400.0,
         rig=RIG,
     )
     assert perm.nominal_value > 0

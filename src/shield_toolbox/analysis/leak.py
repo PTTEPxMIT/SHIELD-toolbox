@@ -7,10 +7,7 @@ pressure rise is then background — seal leakage plus outgassing, not
 permeation — so its rate is the background leak rate of the sealed assembly.
 It is a standalone diagnostic and is not applied to any permeation run.
 
-Unlike the permeation rise fit, the leak fit is a plain unweighted straight
-line over the isolated window: a constant background rate has no "later
-samples are more settled" structure to weight for, and the trace may sit
-below the permeation fit's 0.05 Torr reliability floor.
+The leak fit is a plain unweighted straight line over the isolated window.
 
 Pure physics only: no file I/O, no plotting.
 """
