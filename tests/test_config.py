@@ -45,8 +45,8 @@ def test_get_rig_config_for_date_selects_v1():
 def test_v2_rebuilt_rig_values():
     assert not SHIELD_V2.is_draft
     assert SHIELD_V2.valid_from == date(2026, 9, 16)
-    assert SHIELD_V2.downstream_volume_m3.nominal_value == pytest.approx(1.77e-5)
-    assert SHIELD_V2.downstream_volume_m3.std_dev == pytest.approx(2.2e-6)
+    assert SHIELD_V2.downstream_volume_m3.nominal_value == pytest.approx(7.09e-5)
+    assert SHIELD_V2.downstream_volume_m3.std_dev == pytest.approx(6.45e-6)
     assert SHIELD_V2.sample_diameter_m == pytest.approx(0.014)
     assert SHIELD_V2.sample_area_m2 == pytest.approx(0.25 * math.pi * 0.014**2)
 

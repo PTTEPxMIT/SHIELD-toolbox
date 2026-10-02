@@ -115,7 +115,9 @@ SHIELD_V1 = RigConfig(
 SHIELD_V2 = RigConfig(
     version="v2",
     valid_from=date(2026, 9, 16),  # first permeation run on the rebuilt rig
-    downstream_volume_m3=ufloat(1.77e-5, 2.2e-6),
+    # Downstream volume test on the rebuilt rig (2026-10-01): mean 7.09e-5 m³,
+    # std 6.45e-6 m³, mean bounds 6.45e-5 – 7.74e-5 m³.
+    downstream_volume_m3=ufloat(7.09e-5, 6.45e-6),
     sample_diameter_m=0.014,
     ambient_temperature_K=300.0,
     v1_v2_split_ratio=ufloat(0.35, 0.1),  # carried over from v1 — not re-estimated
@@ -124,7 +126,7 @@ SHIELD_V2 = RigConfig(
     thermocouple=TypeKThermocouple(),
     notes=(
         "Rebuilt SHIELD rig (September 2026): downstream volume "
-        "(1.77 ± 0.22)e-5 m³ and a 14 mm sample fitting, both measured on the "
+        "(7.09 ± 0.65)e-5 m³ and a 14 mm sample fitting, both measured on the "
         "rebuild. Gauges unchanged. The V1/V2 hot-side volume split is still "
         "the v1 estimate."
     ),
