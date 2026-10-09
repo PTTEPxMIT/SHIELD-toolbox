@@ -137,13 +137,17 @@ their saturation caps), and then:
 
 1. **Noise recording.** Before hydrogen has crossed the sample, the sealed
    downstream volume sees only the background (seal leakage plus outgassing).
-   The noise recording runs from 1 min after `t_init` to a quarter of the
-   pre-rise time before the detected onset of the downstream rise (i.e. to
-   0.75 × onset; the early flux builds gradually). The onset is the first
-   10 min block more than 5σ above the background line fitted before it; a
-   1 min block search takes over when the rise starts within minutes (high
-   temperature). The search covers the whole run; if no onset is detected,
-   the noise recording is the first 30 min after it starts.
+   The noise recording starts at `t_init`, or at the first sample after the
+   valve-opening jump on the downstream gauge when one is detected (a change
+   of more than 5σ between the 10 s before and after `t_init`). It runs until
+   the downstream stops being linear, less a quarter of that stretch (the
+   early flux builds gradually). The onset is the first block whose mean
+   sits more than 5σ above the line fitted from the start up to it, with
+   blocks of 10 s, 1 min and 10 min searched and the earliest onset used, so
+   a rise within seconds (high temperature) and a slow one are both caught.
+   σ is the downstream noise over the minute before `t_init`. The search
+   covers the whole run; if no onset is detected, the noise recording is the
+   first 30 min after it starts.
 2. **Initial time.** `t_init` is the first sample where the upstream passes
    half its plateau.
 3. **Background fit.** A straight line `a + b·(t − t_init)` through the noise
@@ -176,8 +180,8 @@ from shield_toolbox.plotting import plot_run_overview
 
 processed = process_run(fetch_run("26.09.25_run_1_17h59"))
 print(processed.initial_time_s)  # 63.8 (s into the recording)
-print(processed.noise.end_s / 60)  # 21.0 (noise recording ends, min after t_init)
-print(processed.background.slope)  # (1.602+/-0.013)e-04 Pa/s
+print(processed.noise.end_s / 60)  # 15.1 (noise recording ends, min after t_init)
+print(processed.background.slope)  # (1.716+/-0.020)e-04 Pa/s
 print(processed.steady_state.slope)  # 3.12e-03 Pa/s
 print(processed.time_lag_s / 3600)  # 1.80 h
 print(processed.permeability)  # (9.5+/-1.1)e+11, measured upstream Baratron P_up
@@ -196,8 +200,8 @@ Every setting of the method is a keyword of `process_run` (the fields of
 | `steady_state_start_taus` | 3 | steady-state window starts at N·τ_L |
 | `steady_state_start_s` | — | fixed steady-state window start, s after `t_init` (no iteration) |
 | `steady_state_end_s` | last usable | steady-state window end, s after `t_init` |
-| `noise_start_s` | 60 | noise recording start, s after `t_init` |
-| `noise_margin_fraction` | 0.25 | noise recording ends this fraction of the pre-rise time before the onset |
+| `noise_start_s` | detected | manual noise recording start, s after `t_init` (default `t_init`, or just after a detected valve jump) |
+| `noise_margin_fraction` | 0.25 | noise recording ends this fraction of its linear stretch (start to onset) before the onset |
 | `onset_sigma` | 5 | onset detection threshold (standard errors) |
 | `noise_end_s` | detected | manual end of the noise recording |
 | `background_slope_pa_per_s` | fitted | override `b` (sensitivity checks) |
