@@ -5,11 +5,11 @@ downstream background has been removed. The procedure, in four steps:
 
 1. **Noise recording.** Before hydrogen has crossed the sample, the sealed
    downstream volume sees only the background: seal leakage plus outgassing.
-   That flat stretch after the upstream step is each run's noise recording.
-   It starts ``NOISE_START_S`` after ``t_init`` (skipping the small jump the
-   valve opening puts on the downstream gauge) and ends a fraction
-   ``NOISE_MARGIN_FRACTION`` of the pre-rise time (``t_init`` to the detected
-   onset of the downstream rise, :func:`rise_onset`) before the onset.
+   That linear stretch after the upstream step is each run's noise recording.
+   It starts at ``t_init``, or just after the valve-opening jump on the
+   downstream gauge when one is detected (:func:`valve_jump`), and runs until
+   the downstream stops being linear (:func:`rise_onset`), less a fraction
+   ``NOISE_MARGIN_FRACTION`` of that stretch.
 2. **Initial time.** ``t_init`` is the moment the upstream pressure steps up:
    the first sample above half its plateau (:func:`initial_time`).
 3. **Background fit.** A straight line ``P_bg = a + b·(t − t_init)`` is fitted
@@ -44,20 +44,29 @@ PRESSURISED_TORR = 10.0
 detection)."""
 UPSTREAM_ZERO_WINDOW_S = 60.0
 """The upstream pre-start bias is the median over this long before the step."""
-NOISE_START_S = 60.0
-"""The noise recording starts this long after ``t_init``, skipping the jump
-the valve opening puts on the downstream gauge."""
+NOISE_SD_WINDOW_S = 60.0
+"""The downstream noise level is measured over this long before ``t_init``
+(or after the noise-recording start when the recording has too little data
+before the step)."""
+JUMP_WINDOW_S = 10.0
+"""The valve-opening jump is the change in mean downstream between this long
+before and this long after ``t_init``."""
+JUMP_SIGMA = 5.0
+"""A change at ``t_init`` larger than this many standard errors is a valve
+jump, and the noise recording starts after it."""
 NOISE_MARGIN_FRACTION = 0.25
-"""The noise recording ends this fraction of the pre-rise time (``t_init``
-to the detected onset) before the onset, i.e. at (1 − fraction)·onset."""
+"""The noise recording ends this fraction of its linear stretch (start to the
+detected onset) before the onset."""
 ONSET_SIGMA = 5.0
 """A block counts as the rise onset when its mean sits more than this many
-standard errors above the background line fitted before it."""
-ONSET_BLOCK_S = 600.0
-"""Block length of the onset search."""
-FINE_ONSET_BLOCK_S = 60.0
-"""Block length of the second onset search, for rises that start within
-minutes (high temperature)."""
+standard errors above the line fitted before it."""
+ONSET_BLOCK_S = (10.0, 60.0, 600.0)
+"""Block lengths of the onset search. Short blocks catch a fast rise early;
+long blocks resolve a slow one. The earliest onset over all of them is used."""
+MIN_FIT_SAMPLES = 10
+"""Fewest samples a line is fitted to (onset search, noise level)."""
+NO_ONSET_NOISE_S = 1800.0
+"""Length of the noise recording when no rise onset is detected."""
 SS_START_TAUS = 3.0
 """The steady-state window starts at this many time lags after ``t_init``."""
 
@@ -112,53 +121,138 @@ def upstream_zero(
     return float(np.median(upstream[last]))
 
 
+def noise_level(
+    time_since_init_s: npt.ArrayLike,
+    pressure: npt.ArrayLike,
+    start_s: float = 0.0,
+    window_s: float = NOISE_SD_WINDOW_S,
+) -> float:
+    """Downstream noise level before the step.
+
+    Measured over the last ``window_s`` before ``t_init``, where the
+    downstream sees only the background and no valve jump. A recording with
+    fewer than ``MIN_FIT_SAMPLES`` there falls back to the ``window_s`` after
+    ``start_s``. Taken from the median absolute difference of consecutive
+    samples, so the valve steps that can sit at the start of a recording,
+    and any slope, do not inflate it.
+
+    Returns:
+        The standard deviation (unit of ``pressure``).
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    p = np.asarray(pressure, dtype=float)
+    sel = (t_rel < 0) & (t_rel >= -window_s)
+    if sel.sum() < MIN_FIT_SAMPLES:
+        sel = (t_rel >= start_s) & (t_rel < start_s + window_s)
+    # MAD → σ for a normal distribution; differencing adds the noise twice.
+    return float(1.4826 * np.median(np.abs(np.diff(p[sel]))) / np.sqrt(2))
+
+
+def valve_jump(
+    time_since_init_s: npt.ArrayLike,
+    pressure: npt.ArrayLike,
+    noise_sd: float,
+    window_s: float = JUMP_WINDOW_S,
+    n_sigma: float = JUMP_SIGMA,
+) -> float | None:
+    """The valve-opening jump on the downstream gauge at ``t_init``, if any.
+
+    A jump is a change in mean downstream between the ``window_s`` before and
+    the ``window_s`` after ``t_init`` larger than ``n_sigma`` standard errors.
+    It lands between the two consecutive samples in that stretch that differ
+    the most.
+
+    Returns:
+        The time of the first sample after the jump (s after ``t_init``), or
+        None if there is no jump, or no data before ``t_init`` to tell.
+    """
+    t_rel = np.asarray(time_since_init_s, dtype=float)
+    p = np.asarray(pressure, dtype=float)
+    before = (t_rel < 0) & (t_rel >= -window_s)
+    after = (t_rel >= 0) & (t_rel < window_s)
+    if not before.any() or not after.any():
+        return None
+    step = p[after].mean() - p[before].mean()
+    se = noise_sd * np.sqrt(1 / before.sum() + 1 / after.sum())
+    if abs(step) <= n_sigma * se:
+        return None
+    idx = np.nonzero(before | after)[0]
+    k = np.argmax(np.abs(np.diff(p[idx])))
+    return float(t_rel[idx[k + 1]])
+
+
 def rise_onset(
     time_since_init_s: npt.ArrayLike,
     pressure: npt.ArrayLike,
-    start_s: float = NOISE_START_S,
-    block_s: float = ONSET_BLOCK_S,
+    noise_sd: float,
+    start_s: float = 0.0,
+    block_s: float | tuple[float, ...] = ONSET_BLOCK_S,
     n_sigma: float = ONSET_SIGMA,
     max_s: float | None = None,
-) -> tuple[float | None, float]:
-    """Onset of the downstream rise, and the noise level before it.
+) -> float | None:
+    """Onset of the downstream rise: where it stops being linear.
 
-    Starting at ``start_s``, the downstream is averaged in ``block_s`` blocks.
-    A straight line is fitted to all the data before each block and extended
-    across it. The onset is the start of the first block whose mean sits more
-    than ``n_sigma`` standard errors above that line. The first three blocks
-    (at most 30 min) only seed the background line.
+    From ``start_s``, the downstream is averaged in ``block_s`` blocks. A
+    straight line is fitted to all the data from ``start_s`` up to each block
+    and extended across it. The onset is the start of the first block whose
+    mean sits more than ``n_sigma`` standard errors above that line, the
+    standard error combining the block's noise with the uncertainty of the
+    extended line. The search runs once per block length and the earliest
+    onset is returned.
 
     Args:
         time_since_init_s: Time since ``t_init``, s.
         pressure: Downstream pressure (any unit; Pa in ``process_run``).
+        noise_sd: Noise level of the downstream (:func:`noise_level`).
         start_s: Start of the search, s after ``t_init``.
-        block_s: Block length, s.
-        n_sigma: Detection threshold in standard errors of the block mean.
+        block_s: Block length(s), s.
+        n_sigma: Detection threshold in standard errors.
         max_s: End of the search, s after ``t_init``; default the end of
             the data.
 
     Returns:
-        ``(onset_s, noise_sd)``: the onset in s after ``t_init`` (None if no
-        block departs from the background), and the standard deviation of
-        the seed stretch about its linear fit (same unit as ``pressure``).
+        The onset in s after ``t_init``, or None if the downstream never
+        departs from a line.
     """
     t_rel = np.asarray(time_since_init_s, dtype=float)
     p = np.asarray(pressure, dtype=float)
-    first = (t_rel >= start_s) & (t_rel < start_s + min(1800, 3 * block_s))
-    noise_sd = np.std(
-        p[first] - np.polyval(np.polyfit(t_rel[first], p[first], 1), t_rel[first])
-    )
     max_s = t_rel[-1] if max_s is None else max_s
-    for lo in np.arange(start_s, max_s, block_s)[3:]:
-        before = (t_rel >= start_s) & (t_rel < lo)
-        block = (t_rel >= lo) & (t_rel < lo + block_s)
-        if not block.any():
-            break
-        b, a = np.polyfit(t_rel[before], p[before], 1)
-        resid = p[block].mean() - (a + b * t_rel[block].mean())
-        if resid > n_sigma * noise_sd / np.sqrt(block.sum()):
-            return float(lo), float(noise_sd)
-    return None, float(noise_sd)
+    sel = (t_rel >= start_s) & (t_rel <= max_s)
+    t, y = t_rel[sel] - start_s, p[sel]
+    if len(t) <= MIN_FIT_SAMPLES:
+        return None
+    # Running sums give the line through the first k samples in O(1).
+    zero = np.zeros(1)
+    n = np.arange(len(t) + 1, dtype=float)
+    s_t, s_tt = (
+        np.concatenate([zero, np.cumsum(t)]),
+        np.concatenate([zero, np.cumsum(t * t)]),
+    )
+    s_y, s_ty = (
+        np.concatenate([zero, np.cumsum(y)]),
+        np.concatenate([zero, np.cumsum(t * y)]),
+    )
+    seed = t[MIN_FIT_SAMPLES - 1]
+
+    onsets = []
+    for length in np.atleast_1d(block_s):
+        for lo in np.arange(seed, t[-1], length):
+            k, k2 = np.searchsorted(t, [lo, lo + length])
+            if k < MIN_FIT_SAMPLES:
+                continue
+            if k2 == k:
+                continue
+            t_mean = s_t[k] / n[k]
+            sxx = s_tt[k] - s_t[k] * t_mean
+            b = (s_ty[k] - t_mean * s_y[k]) / sxx
+            a = s_y[k] / n[k] - b * t_mean
+            t_block = (s_t[k2] - s_t[k]) / (k2 - k)
+            resid = (s_y[k2] - s_y[k]) / (k2 - k) - (a + b * t_block)
+            var = 1 / (k2 - k) + 1 / n[k] + (t_block - t_mean) ** 2 / sxx
+            if resid > n_sigma * noise_sd * np.sqrt(var):
+                onsets.append(float(lo + start_s))
+                break
+    return min(onsets) if onsets else None
 
 
 @dataclass(frozen=True)
@@ -173,10 +267,12 @@ class NoiseRecording:
     """Detected onset of the downstream rise, s after ``t_init`` (None if
     none was detected)."""
     onset_from: str
-    """``"10 min blocks"``, ``"1 min blocks"``, ``"none detected"`` or
-    ``"manual"``."""
+    """``"detected"``, ``"none detected"`` or ``"manual"``."""
+    jump_s: float | None
+    """First sample after the valve-opening jump, s after ``t_init`` (None
+    if no jump was detected)."""
     noise_sd: float
-    """Noise level before the onset (unit of the pressure searched)."""
+    """Noise level of the downstream (unit of the pressure searched)."""
     used: np.ndarray
     """Boolean mask of the samples inside the noise recording."""
 
@@ -184,58 +280,53 @@ class NoiseRecording:
 def find_noise_recording(
     time_since_init_s: npt.ArrayLike,
     pressure: npt.ArrayLike,
-    start_s: float = NOISE_START_S,
+    start_s: float | None = None,
     margin_fraction: float = NOISE_MARGIN_FRACTION,
     n_sigma: float = ONSET_SIGMA,
     end_s: float | None = None,
 ) -> NoiseRecording:
-    """Find the noise recording: from ``start_s`` to
-    ``(1 − margin_fraction)·onset``.
+    """Find the noise recording: the linear stretch from the upstream step
+    to the rise onset.
 
-    The early permeation flux builds gradually, so the recording stops a
-    fraction of the pre-rise time before the detected onset. The onset comes
-    from 10 min blocks (:func:`rise_onset`). At high temperature the rise can
-    start within minutes, before the 10 min blocks can resolve it, so the
-    search is repeated with 1 min blocks; if that finds the rise inside the
-    10-min-based noise window, the 1 min onset is used instead. If no onset
-    is detected at all, the noise recording is the 30 min seed stretch the
-    onset search starts from.
+    It starts at ``t_init``, or at the first sample after the valve-opening
+    jump when one is detected (:func:`valve_jump`). It ends where the
+    downstream stops being linear (:func:`rise_onset`), less
+    ``margin_fraction`` of that stretch, since the early permeation flux
+    builds gradually and the last of it is not yet past the threshold. If no
+    onset is detected, it runs ``NO_ONSET_NOISE_S``.
 
     Args:
         time_since_init_s: Time since ``t_init``, s.
         pressure: Downstream pressure (Pa in ``process_run``).
-        start_s: Start of the noise recording, s after ``t_init``.
-        margin_fraction: Fraction of the pre-rise time (``t_init`` to the
-            onset) left between the end of the noise recording and the
-            onset.
+        start_s: Manual start of the noise recording, s after ``t_init``;
+            overrides the detected one.
+        margin_fraction: Fraction of the linear stretch (start to onset) left
+            between the end of the noise recording and the onset.
         n_sigma: Onset detection threshold (standard errors).
         end_s: Manual end of the noise recording, s after ``t_init``;
             overrides the detected one (the onset is still reported).
     """
     t_rel = np.asarray(time_since_init_s, dtype=float)
     p = np.asarray(pressure, dtype=float)
-    onset_s, noise_sd = rise_onset(t_rel, p, start_s=start_s, n_sigma=n_sigma)
-    onset_from = "10 min blocks"
-    fine_onset_s, fine_sd = rise_onset(
-        t_rel, p, start_s=start_s, block_s=FINE_ONSET_BLOCK_S, n_sigma=n_sigma
-    )
-    if fine_onset_s is not None and (
-        onset_s is None or fine_onset_s < (1 - margin_fraction) * onset_s
-    ):
-        # rise already under way inside the 10-min-based window
-        onset_s, noise_sd, onset_from = fine_onset_s, fine_sd, "1 min blocks"
+    noise_sd = noise_level(t_rel, p)
+    jump_s = valve_jump(t_rel, p, noise_sd)
+    if start_s is None:
+        start_s = 0.0 if jump_s is None else jump_s
+    onset_s = rise_onset(t_rel, p, noise_sd, start_s=start_s, n_sigma=n_sigma)
+    onset_from = "detected"
     if end_s is not None:
         onset_from = "manual"
     elif onset_s is None:
         onset_from = "none detected"
-        end_s = start_s + 1800.0
+        end_s = start_s + NO_ONSET_NOISE_S
     else:
-        end_s = (1 - margin_fraction) * onset_s
+        end_s = start_s + (1 - margin_fraction) * (onset_s - start_s)
     return NoiseRecording(
         start_s=float(start_s),
         end_s=float(end_s),
         onset_s=onset_s,
         onset_from=onset_from,
+        jump_s=jump_s,
         noise_sd=float(noise_sd),
         used=(t_rel >= start_s) & (t_rel <= end_s),
     )

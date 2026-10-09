@@ -46,9 +46,13 @@ from shield_toolbox.analysis import (
     solubility_from_permeability,
     upstream_zero,
 )
+from shield_toolbox.analysis.legacy import (
+    TailAsymptoteFit,
+    fit_tail_asymptote,
+    tail_mean,
+)
 from shield_toolbox.analysis.time_lag import (
     NOISE_MARGIN_FRACTION,
-    NOISE_START_S,
     ONSET_SIGMA,
     PRESSURISED_TORR,
     SS_START_TAUS,
@@ -134,10 +138,11 @@ class TimeLagSettings:
     steady_state_start_s: float | None = None
     """Fixed start of the steady-state window, s after ``t_init``; overrides
     ``steady_state_start_taus`` (no τ_L iteration)."""
-    noise_start_s: float = NOISE_START_S
-    """The noise recording starts this long after ``t_init``."""
+    noise_start_s: float | None = None
+    """Manual start of the noise recording, s after ``t_init``. None:
+    ``t_init``, or just after the valve-opening jump when one is detected."""
     noise_margin_fraction: float = NOISE_MARGIN_FRACTION
-    """The noise recording ends this fraction of the pre-rise time (t_init to
+    """The noise recording ends this fraction of its linear stretch (start to
     the detected onset) before the onset."""
     onset_sigma: float = ONSET_SIGMA
     """Rise-onset detection threshold, in standard errors."""
@@ -269,6 +274,7 @@ class ProcessedRun:
                     "end_s": self.noise.end_s,
                     "onset_s": self.noise.onset_s,
                     "onset_from": self.noise.onset_from,
+                    "jump_s": self.noise.jump_s,
                     "noise_sd_pa": self.noise.noise_sd,
                     "n_samples": int(self.noise.used.sum()),
                 },
@@ -656,6 +662,189 @@ def _analyse(
         solubility=solubility,
         furnace_setpoint=furnace_setpoint,
         valve_times_s=valve_times_s,
+    )
+
+
+@dataclass(frozen=True)
+class LegacyProcessedRun:
+    """A run processed with the legacy (original-rig) time-lag method.
+
+    See :mod:`shield_toolbox.analysis.legacy`. Stored in the same layout as
+    :class:`ProcessedRun`, so :func:`~shield_toolbox.campaign.load_results`
+    reads both.
+    """
+
+    run_id: str
+    sample: SampleInfo
+    rig: RigConfig
+    timeseries: pd.DataFrame
+    """Columns: ``timestamp``, ``time_s``, one ``<gauge>_voltage_V`` per
+    gauge, ``upstream_torr``/``upstream_err_torr``,
+    ``downstream_torr``/``downstream_err_torr``, ``temperature_K`` and
+    ``fit_used``."""
+    fit: TailAsymptoteFit
+    """Tail asymptote on time since the first sample."""
+    sample_temperature_K: float
+    temperature_source: str
+    """``"thermocouple"`` or ``"furnace_setpoint_offset"``."""
+    upstream_pressure_torr: float
+    """Mean upstream pressure over the last 75 % of the recording."""
+    downstream_pressure_torr: float
+    """Last downstream pressure in the fit (Takaishi–Sensui evaluation point)."""
+    permeability: UFloat
+    time_lag_s: float | None
+    """τ from the first sample; None if not positive."""
+    diffusivity_m2_per_s: float | None
+    solubility: UFloat | None
+    furnace_setpoint: float | None
+    valve_times_s: dict[str, float]
+
+    def result_dict(self) -> dict:
+        """The scalar results and provenance, as written to ``result.json``."""
+        time_s = self.timeseries["time_s"].to_numpy()
+        sample = asdict(self.sample)
+        sample["coating_layers"] = list(sample["coating_layers"])
+        fit_time = time_s[self.fit.used] - time_s[0]
+        return {
+            "run_id": self.run_id,
+            "run_type": "permeation_exp",
+            "sample": sample,
+            "provenance": {
+                "rig_version": self.rig.version,
+                "toolbox_version": __version__,
+                "processed_utc": datetime.now(UTC).isoformat(),
+                "method": "legacy tail asymptote",
+            },
+            "run_info": {
+                "furnace_setpoint": self.furnace_setpoint,
+                "valve_times_s": self.valve_times_s,
+                "duration_s": float(time_s[-1] - time_s[0]),
+                "n_samples": int(len(time_s)),
+            },
+            "temperature": {
+                "sample_temperature_K": self.sample_temperature_K,
+                "source": self.temperature_source,
+            },
+            "results": {
+                "downstream_rise_torr_per_s": self.fit.slope_torr_per_s,
+                "fit_intercept_torr": self.fit.intercept_torr,
+                "fit_window_s": [float(fit_time[0]), float(fit_time[-1])],
+                "n_fit_samples": int(self.fit.used.sum()),
+                "upstream_pressure_torr": self.upstream_pressure_torr,
+                "downstream_pressure_torr": self.downstream_pressure_torr,
+                "permeability": {
+                    **_ufloat_dict(self.permeability),
+                    "units": "H/(m·s·Pa^0.5)",
+                },
+                "time_lag": {"time_lag_s": self.time_lag_s},
+                "diffusivity": {
+                    "value": self.diffusivity_m2_per_s,
+                    "units": "m^2/s",
+                },
+                "solubility": {
+                    **_ufloat_dict(self.solubility),
+                    "units": "H/(m^3·Pa^0.5)",
+                },
+            },
+        }
+
+    def output_dir(self, base_dir: str | Path) -> Path:
+        """``<base>/<substrate>/<coating>/<run_id>``, names made path-safe."""
+        return _sample_output_dir(base_dir, self.sample, self.run_id)
+
+    def write(self, base_dir: str | Path) -> Path:
+        """Write ``timeseries.parquet`` + ``result.json``; returns the run dir."""
+        run_dir = self.output_dir(base_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self.timeseries.to_parquet(run_dir / TIMESERIES_FILENAME, index=False)
+        with open(run_dir / RESULT_FILENAME, "w") as f:
+            json.dump(self.result_dict(), f, indent=2)
+        return run_dir
+
+
+def process_legacy_run(
+    run: PermeationRun,
+    sample: SampleInfo | None = None,
+    rig: RigConfig | None = None,
+) -> LegacyProcessedRun:
+    """Process a run with the legacy method used for the original-rig runs.
+
+    Follows ``SHIELD_analysis.ipynb``: an unweighted line through the last
+    25 % of the 0.05–0.95 Torr downstream samples; τ is its P = 0 crossing
+    measured from the first sample; D = e²/6τ; upstream pressure and
+    temperature are means over the last 75 % of the recording. Φ uses the
+    corrected Takaishi–Sensui formula (:func:`permeability_takaishi_sensui`)
+    with the rig constants, not the legacy notebook's formula, which
+    dropped the hot downstream volume.
+
+    Args:
+        run: The loaded raw run.
+        sample: Sample mounted for this run; defaults to the run metadata.
+            Old runs often carry no or a wrong thickness — pass it here.
+        rig: Rig configuration; defaults to the one in service on the run
+            date.
+    """
+    if sample is None:
+        sample = SampleInfo.from_metadata(run.metadata)
+        if sample is None:
+            raise ValueError(
+                f"Run {run.run_id}: metadata has no sample description — "
+                "pass sample=SampleInfo(...) explicitly"
+            )
+    if rig is None:
+        rig = get_rig_config_for_date(_run_date(run))
+
+    _, upstream_torr = _baratron_pressure(run, "upstream")
+    _, downstream_torr = _baratron_pressure(run, "downstream")
+    in_run = np.ones(len(run.time_s), dtype=bool)  # legacy: the whole recording
+    timeseries = _build_timeseries(run, upstream_torr, downstream_torr, in_run)
+    timeseries = timeseries.drop(columns="in_run")
+
+    time_s = run.time_s - run.time_s[0]
+    fit = fit_tail_asymptote(time_s, downstream_torr)
+    timeseries["fit_used"] = fit.used
+
+    temperature = timeseries["temperature_K"].to_numpy()
+    if np.isfinite(temperature).any():
+        sample_temperature_K = float(np.nanmean(temperature[len(temperature) // 4 :]))
+        temperature_source = "thermocouple"
+    else:
+        sample_temperature_K, temperature_source = _window_temperature(
+            temperature, rig, run.furnace_setpoint, run.run_id
+        )
+    upstream = tail_mean(upstream_torr)
+    downstream_last = float(downstream_torr[fit.used][-1])
+    permeability = permeability_takaishi_sensui(
+        slope_torr_per_s=fit.slope_torr_per_s,
+        temperature_K=sample_temperature_K,
+        sample_thickness_m=sample.thickness_m,
+        downstream_pressure_torr=downstream_last,
+        upstream_pressure_torr=upstream,
+        rig=rig,
+    )
+    time_lag_s = fit.time_lag_s
+    if time_lag_s > 0:
+        diffusivity = diffusivity_from_time_lag(time_lag_s, sample.thickness_m)
+        solubility = solubility_from_permeability(permeability, diffusivity)
+    else:
+        time_lag_s = diffusivity = solubility = None
+
+    return LegacyProcessedRun(
+        run_id=run.run_id,
+        sample=sample,
+        rig=rig,
+        timeseries=timeseries,
+        fit=fit,
+        sample_temperature_K=sample_temperature_K,
+        temperature_source=temperature_source,
+        upstream_pressure_torr=upstream,
+        downstream_pressure_torr=downstream_last,
+        permeability=permeability,
+        time_lag_s=time_lag_s,
+        diffusivity_m2_per_s=diffusivity,
+        solubility=solubility,
+        furnace_setpoint=run.furnace_setpoint,
+        valve_times_s=run.valve_times_s,
     )
 
 

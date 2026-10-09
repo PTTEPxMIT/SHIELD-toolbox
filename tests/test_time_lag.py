@@ -11,9 +11,11 @@ from shield_toolbox.analysis import (
     fit_background,
     fit_steady_state,
     initial_time,
+    noise_level,
     rise_onset,
     solubility_from_permeability,
     upstream_zero,
+    valve_jump,
 )
 
 THICKNESS_M = 0.00088
@@ -41,53 +43,88 @@ def test_initial_time_is_half_plateau_crossing():
         initial_time(time_s, np.zeros_like(time_s))
 
 
-def test_rise_onset_finds_departure_from_background():
+def test_noise_level_ignores_slope_and_valve_steps():
     rng = np.random.default_rng(1)
+    t_rel = np.arange(-60.0, 600.0, 1.0)
+    p = 1e-3 * t_rel + rng.normal(0, 0.01, len(t_rel))
+    p[t_rel < -50] += 0.5  # a valve closing at the start of the recording
+    assert noise_level(t_rel, p) == pytest.approx(0.01, rel=0.2)
+
+
+def test_noise_level_falls_back_after_start_without_pre_step_data():
+    rng = np.random.default_rng(2)
+    t_rel = np.arange(0.0, 600.0, 1.0)
+    assert noise_level(t_rel, rng.normal(0, 0.01, len(t_rel))) == pytest.approx(
+        0.01, rel=0.2
+    )
+
+
+def test_valve_jump_found_one_sample_after_t_init():
+    rng = np.random.default_rng(3)
+    t_rel = np.arange(-60.0, 600.0, 1.0)
+    p = rng.normal(0, 0.01, len(t_rel))
+    assert valve_jump(t_rel, p, 0.01) is None
+    p[t_rel >= 1.0] -= 0.1
+    assert valve_jump(t_rel, p, 0.01) == 1.0
+    # No data before t_init: nothing to compare against.
+    assert valve_jump(t_rel[t_rel >= 0], p[t_rel >= 0], 0.01) is None
+
+
+def test_rise_onset_finds_departure_from_line():
+    rng = np.random.default_rng(4)
     t_rel = np.arange(0.0, 4 * 3600, 10.0)
     p = 1e-4 * t_rel + rng.normal(0, 0.01, len(t_rel))
     p[t_rel >= 5000] += 2e-4 * (t_rel[t_rel >= 5000] - 5000)
-    onset_s, noise_sd = rise_onset(t_rel, p)
-    # The onset is the start of the first block that rises: the one holding
-    # the kink, or the next.
+    onset_s = rise_onset(t_rel, p, 0.01)
+    # The start of the first block that rises: the one holding the kink, or
+    # a later one.
     assert 5000 - 600 < onset_s <= 5000 + 600
-    assert onset_s % 600 == 60  # block starts are 60 s + k·600 s
-    assert noise_sd == pytest.approx(0.01, rel=0.2)
+
+
+def test_rise_onset_catches_a_rise_within_seconds():
+    # A 1 Hz recording whose rise starts 20 s after t_init (high temperature).
+    rng = np.random.default_rng(5)
+    t_rel = np.arange(0.0, 600.0, 1.0)
+    p = 1e-5 * t_rel + rng.normal(0, 0.01, len(t_rel))
+    p[t_rel >= 20] += 1e-4 * (t_rel[t_rel >= 20] - 20) ** 2
+    assert 10 < rise_onset(t_rel, p, 0.01) <= 60
 
 
 def test_rise_onset_none_without_rise():
-    rng = np.random.default_rng(2)
+    rng = np.random.default_rng(6)
     t_rel = np.arange(0.0, 7 * 3600, 10.0)
-    onset_s, _ = rise_onset(t_rel, rng.normal(0, 0.01, len(t_rel)))
-    assert onset_s is None
+    assert rise_onset(t_rel, rng.normal(0, 0.01, len(t_rel)), 0.01) is None
 
 
 def test_rise_onset_searches_the_whole_run():
     # Flat for 10 h, then a rise: found however late it starts.
     t_rel = np.arange(0.0, 14 * 3600, 10.0)
     p = np.where(t_rel < 36000, 0.0, 1e-3 * (t_rel - 36000))
-    p = p + np.random.default_rng(5).normal(0, 0.01, len(t_rel))
-    onset_s, _ = rise_onset(t_rel, p)
-    assert 36000 - 600 < onset_s <= 36000 + 600
+    p = p + np.random.default_rng(7).normal(0, 0.01, len(t_rel))
+    assert 36000 - 600 < rise_onset(t_rel, p, 0.01) <= 36000 + 600
 
 
-def test_noise_recording_falls_back_to_seed_stretch_without_onset():
-    rng = np.random.default_rng(6)
+def test_noise_recording_without_onset_runs_fixed_length():
+    rng = np.random.default_rng(8)
     t_rel = np.arange(0.0, 3 * 3600, 10.0)
     noise = find_noise_recording(t_rel, rng.normal(0, 0.01, len(t_rel)))
     assert noise.onset_s is None
     assert noise.onset_from == "none detected"
-    assert noise.end_s == 60.0 + 1800.0
+    assert noise.start_s == 0.0
+    assert noise.end_s == 1800.0
 
 
-def test_noise_recording_ends_margin_before_onset():
-    rng = np.random.default_rng(3)
+def test_noise_recording_from_t_init_to_margin_before_onset():
+    rng = np.random.default_rng(9)
     t_rel = np.arange(-100.0, 6 * 3600, 10.0)
     p = 5.0 + 1e-4 * t_rel + _fickian_rise(t_rel, 3 * 3600, 1.5e-3)
     p += rng.normal(0, 0.01, len(t_rel))
     noise = find_noise_recording(t_rel, p)
-    assert noise.onset_from == "10 min blocks"
+    assert noise.onset_from == "detected"
+    assert noise.jump_s is None
+    assert noise.start_s == 0.0
     assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
-    np.testing.assert_array_equal(noise.used, (t_rel >= 60.0) & (t_rel <= noise.end_s))
+    np.testing.assert_array_equal(noise.used, (t_rel >= 0.0) & (t_rel <= noise.end_s))
 
     background = fit_background(t_rel, p, noise.used)
     assert background.slope.nominal_value == pytest.approx(1e-4, rel=0.1)
@@ -95,13 +132,25 @@ def test_noise_recording_ends_margin_before_onset():
     assert background.evaluate(0.0) == pytest.approx(background.level.nominal_value)
 
 
-def test_noise_recording_switches_to_one_minute_blocks_for_fast_rise():
-    rng = np.random.default_rng(4)
-    t_rel = np.arange(-100.0, 3 * 3600, 2.0)
-    p = 5.0 + _fickian_rise(t_rel, 900, 1e-2) + rng.normal(0, 0.01, len(t_rel))
+def test_noise_recording_starts_after_valve_jump():
+    rng = np.random.default_rng(10)
+    t_rel = np.arange(-60.0, 3 * 3600, 1.0)
+    p = 5.0 + 1e-4 * t_rel + _fickian_rise(t_rel, 900, 1e-2)
+    p += rng.normal(0, 0.01, len(t_rel))
+    p[t_rel >= 1.0] -= 0.5
     noise = find_noise_recording(t_rel, p)
-    assert noise.onset_from == "1 min blocks"
-    assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
+    assert noise.jump_s == 1.0
+    assert noise.start_s == 1.0
+    assert noise.end_s == pytest.approx(1.0 + 0.75 * (noise.onset_s - 1.0))
+    background = fit_background(t_rel, p, noise.used)
+    assert background.level.nominal_value == pytest.approx(4.5, abs=0.02)
+
+
+def test_noise_recording_manual_start():
+    rng = np.random.default_rng(11)
+    t_rel = np.arange(-60.0, 3 * 3600, 10.0)
+    p = 5.0 + _fickian_rise(t_rel, 900, 1e-2) + rng.normal(0, 0.01, len(t_rel))
+    assert find_noise_recording(t_rel, p, start_s=60.0).start_s == 60.0
 
 
 def test_steady_state_fit_recovers_time_lag_from_fickian_transient():

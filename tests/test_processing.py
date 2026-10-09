@@ -127,11 +127,12 @@ def test_rig_resolved_from_run_date(processed):
 
 def test_recovers_background_and_time_lag(processed):
     assert processed.initial_time_s == pytest.approx(T_STEP_S)
-    # Slow rise: the 10 min blocks find the onset, the noise recording stops
-    # a quarter of the pre-rise time before it.
+    # No valve jump: the noise recording starts at t_init and stops a quarter
+    # of its linear stretch before the onset.
     noise = processed.noise
-    assert noise.onset_from == "10 min blocks"
-    assert noise.start_s == 60.0
+    assert noise.onset_from == "detected"
+    assert noise.jump_s is None
+    assert noise.start_s == 0.0
     assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
     assert 1800 < noise.onset_s < 3 * 3600
     assert processed.background.slope.nominal_value == pytest.approx(1e-4, rel=0.1)
@@ -161,13 +162,13 @@ def test_derived_properties(processed):
     assert processed.temperature_source == "thermocouple"
 
 
-def test_fast_rise_uses_one_minute_onset():
+def test_fast_rise_onset_within_minutes():
     processed = process_run(
         _permeation_run(tau_s=900, s_inf=1e-2, duration_s=3 * 3600, dt_s=2.0),
         SAMPLE,
     )
     noise = processed.noise
-    assert noise.onset_from == "1 min blocks"
+    assert noise.onset_from == "detected"
     assert noise.onset_s < 1200
     assert noise.end_s == pytest.approx(0.75 * noise.onset_s)
     assert processed.time_lag_s == pytest.approx(900, rel=0.05)
@@ -211,6 +212,26 @@ def test_settings_and_refit(processed):
 def test_noise_margin_fraction_setting(processed):
     half = processed.refit(noise_margin_fraction=0.5)
     assert half.noise.end_s == pytest.approx(0.5 * half.noise.onset_s)
+
+
+def test_valve_jump_moves_noise_start():
+    run = _permeation_run(tau_s=900, s_inf=1e-2, duration_s=3 * 3600, dt_s=1.0)
+    # A 0.5 Pa drop on the downstream gauge one sample after the valve opens.
+    after = run.time_s > T_STEP_S
+    run.gauge_voltages["Baratron626D_1T"][after] -= 0.5 / TORR_TO_PA * 10.0
+    processed = process_run(run, SAMPLE)
+    assert processed.noise.jump_s == pytest.approx(1.0)
+    assert processed.noise.start_s == processed.noise.jump_s
+    # The background level is the post-jump one.
+    assert processed.background.level.nominal_value == pytest.approx(
+        BASELINE_PA - 0.5, abs=0.02
+    )
+    assert processed.background.slope.nominal_value == pytest.approx(1e-4, abs=3e-5)
+
+
+def test_manual_noise_start():
+    processed = process_run(_permeation_run(), SAMPLE, noise_start_s=300.0)
+    assert processed.noise.start_s == 300.0
 
 
 def test_manual_noise_end():
@@ -263,7 +284,8 @@ def test_result_dict_contents(processed):
     assert result["provenance"]["settings"]["steady_state_start_taus"] == 3.0
     results = result["results"]
     assert results["initial_time_s"] == pytest.approx(T_STEP_S)
-    assert results["noise_recording"]["onset_from"] == "10 min blocks"
+    assert results["noise_recording"]["onset_from"] == "detected"
+    assert results["noise_recording"]["jump_s"] is None
     assert results["background"]["slope_pa_per_s"]["std_dev"] > 0
     assert results["steady_state"]["slope_pa_per_s"] == processed.steady_state.slope
     assert results["permeability"]["units"] == "H/(m·s·Pa^0.5)"
