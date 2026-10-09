@@ -27,9 +27,11 @@ from shield_toolbox.analysis.time_lag import (
     fit_background,
     fit_steady_state,
     initial_time,
+    noise_level,
     rise_onset,
     solubility_from_permeability,
     upstream_zero,
+    valve_jump,
 )
 from shield_toolbox.analysis.window import downstream_window_mask, run_window_mask
 
@@ -53,6 +55,7 @@ __all__ = [
     "furnace_temperature_offset",
     "initial_time",
     "leak_molar_rate_mol_per_s",
+    "noise_level",
     "permeability_takaishi_sensui",
     "rise_onset",
     "run_window_mask",
@@ -60,4 +63,5 @@ __all__ = [
     "tail_mean",
     "takaishi_sensui_ratio",
     "upstream_zero",
+    "valve_jump",
 ]

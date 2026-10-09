@@ -53,7 +53,6 @@ from shield_toolbox.analysis.legacy import (
 )
 from shield_toolbox.analysis.time_lag import (
     NOISE_MARGIN_FRACTION,
-    NOISE_START_S,
     ONSET_SIGMA,
     PRESSURISED_TORR,
     SS_START_TAUS,
@@ -139,10 +138,11 @@ class TimeLagSettings:
     steady_state_start_s: float | None = None
     """Fixed start of the steady-state window, s after ``t_init``; overrides
     ``steady_state_start_taus`` (no τ_L iteration)."""
-    noise_start_s: float = NOISE_START_S
-    """The noise recording starts this long after ``t_init``."""
+    noise_start_s: float | None = None
+    """Manual start of the noise recording, s after ``t_init``. None:
+    ``t_init``, or just after the valve-opening jump when one is detected."""
     noise_margin_fraction: float = NOISE_MARGIN_FRACTION
-    """The noise recording ends this fraction of the pre-rise time (t_init to
+    """The noise recording ends this fraction of its linear stretch (start to
     the detected onset) before the onset."""
     onset_sigma: float = ONSET_SIGMA
     """Rise-onset detection threshold, in standard errors."""
@@ -274,6 +274,7 @@ class ProcessedRun:
                     "end_s": self.noise.end_s,
                     "onset_s": self.noise.onset_s,
                     "onset_from": self.noise.onset_from,
+                    "jump_s": self.noise.jump_s,
                     "noise_sd_pa": self.noise.noise_sd,
                     "n_samples": int(self.noise.used.sum()),
                 },

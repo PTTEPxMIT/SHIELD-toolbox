@@ -39,8 +39,9 @@ def plot_initial_time(
 ) -> Axes:
     """Steps 1–2: downstream pressure and normalised upstream around ``t_init``.
 
-    The noise recording is shaded and the detected rise onset marked. The
-    downstream is shown relative to the start of the noise recording.
+    The noise recording is shaded and the detected rise onset marked, as is
+    the valve-opening jump when one was detected. The downstream is shown
+    relative to the start of the noise recording.
 
     Args:
         processed: The processed run.
@@ -85,6 +86,14 @@ def plot_initial_time(
             lw=0.8,
             ls="--",
             label="detected rise onset",
+        )
+    if noise.jump_s is not None:
+        ax.axvline(
+            noise.jump_s / scale,
+            color="0.4",
+            lw=0.8,
+            ls=":",
+            label="valve jump",
         )
     ax.set_xlabel(f"time since t$_{{init}}$ ({unit})")
     ax.set_ylabel("P$_{down}$ (Pa, relative)")

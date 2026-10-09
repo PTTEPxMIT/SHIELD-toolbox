@@ -3,7 +3,8 @@ time-lag method.
 
 Each run is given as a SHIELD-Data run ID (fetched via ``shield_data``) or a
 local run directory. For each run the script finds ``t_init`` (upstream
-step), the noise recording before the downstream rise, fits and subtracts
+step), the noise recording (from ``t_init``, or just after a detected valve
+jump, to where the downstream stops being linear), fits and subtracts
 the background line, fits the steady-state line from 3 τ_L, and derives
 permeability (Takaishi–Sensui), diffusivity and solubility. It writes the
 processed artifact (``timeseries.parquet`` + ``result.json``) under
@@ -108,10 +109,11 @@ def main() -> None:
         start_s, end_s = processed.steady_state_window_s
         print(f"{run.run_id}:")
         print(f"  t_init          : {processed.initial_time_s:.0f} s")
-        onset = "none" if noise.onset_s is None else f"{noise.onset_s / 60:.1f} min"
+        onset = "none" if noise.onset_s is None else f"{noise.onset_s:.0f} s"
+        jump = "none" if noise.jump_s is None else f"at {noise.jump_s:.0f} s"
         print(
-            f"  noise recording : {noise.start_s / 60:g}–{noise.end_s / 60:.3g} min "
-            f"(onset {onset}, {noise.onset_from})"
+            f"  noise recording : {noise.start_s:.0f}–{noise.end_s:.0f} s "
+            f"(onset {onset}, {noise.onset_from}; valve jump {jump})"
         )
         print(f"  background b    : {processed.background.slope:.2uP} Pa/s")
         print(
