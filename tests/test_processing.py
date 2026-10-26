@@ -329,6 +329,17 @@ def test_window_ends_before_downstream_saturation():
     assert processed.steady_state_window_s[1] < 15 * 3600 - T_STEP_S
 
 
+def test_upstream_saturation_after_downstream_saturation_is_ignored():
+    # End-of-run vent: the upstream hits its cap after the downstream has saturated.
+    run = _permeation_run(saturate_at_s=15 * 3600)
+    upstream_v = run.gauge_voltages["Baratron626D_1KT"]
+    upstream_v[run.time_s >= 16 * 3600] = 10.12
+    ts = process_run(run, SAMPLE).timeseries
+    first_saturated = int(np.argmax(run.gauge_voltages["Baratron626D_1T"] >= 10.0))
+    assert ts["in_run"].iloc[:first_saturated].all()
+    assert not ts["in_run"].iloc[first_saturated:].any()
+
+
 def test_process_run_defaults_to_metadata_sample():
     processed = process_run(_permeation_run())
     assert processed.sample.substrate == "316L steel"

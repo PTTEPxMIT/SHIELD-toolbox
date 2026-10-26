@@ -526,10 +526,12 @@ def process_run(
 
     # In-run: after the upstream fill comes off its saturation cap, and before
     # the downstream gauge first saturates (after which the downstream reading,
-    # and on the rebuilt rig the thermocouple, are no longer valid).
-    in_run = run_window_mask(run.voltage(upstream_name)) & downstream_window_mask(
-        run.voltage(downstream_name)
-    )
+    # and on the rebuilt rig the thermocouple, are no longer valid). Upstream
+    # saturation after the downstream has saturated (e.g. venting at the end of
+    # the run) is already outside the run, so it does not move the start.
+    downstream_ok = downstream_window_mask(run.voltage(downstream_name))
+    upstream_v = np.where(downstream_ok, run.voltage(upstream_name), 0.0)
+    in_run = run_window_mask(upstream_v) & downstream_ok
     if not in_run.any():
         raise ValueError(
             f"Run {run.run_id}: no analysable window (upstream saturated to the "
